@@ -245,6 +245,7 @@ Resources:
       SSESpecification:
         SSEEnabled: true
         KMSMasterKeyId: !Ref DynamoDBKMSKey
+        SSEType: KMS
       PointInTimeRecoverySpecification:
         PointInTimeRecoveryEnabled: true
       Tags:
@@ -341,41 +342,45 @@ Resources:
                   - !GetAtt LambdaKMSKey.Arn
                   - !GetAtt SNSKMSKey.Arn
                   - !If [UseDynamoDB, !GetAtt DynamoDBKMSKey.Arn, !Ref 'AWS::NoValue']
-        - PolicyName: S3StoragePolicy
-          Condition: UseS3
-          PolicyDocument:
-            Version: '2012-10-17'
-            Statement:
-              - Effect: Allow
-                Action:
-                  - s3:PutObject
-                  - s3:GetObject
-                  - s3:ListBucket
-                Resource:
-                  - !If 
-                    - CreateS3Bucket
-                    - !Sub "arn:aws:s3:::${MetricsS3Bucket}"
-                    - !Sub "arn:aws:s3:::${S3BucketName}"
-                  - !If 
-                    - CreateS3Bucket
-                    - !Sub "arn:aws:s3:::${MetricsS3Bucket}/*"
-                    - !Sub "arn:aws:s3:::${S3BucketName}/*"
-        - PolicyName: DynamoDBStoragePolicy
-          Condition: UseDynamoDB
-          PolicyDocument:
-            Version: '2012-10-17'
-            Statement:
-              - Effect: Allow
-                Action:
-                  - dynamodb:PutItem
-                  - dynamodb:GetItem
-                  - dynamodb:Query
-                  - dynamodb:Scan
-                  - dynamodb:CreateTable
-                  - dynamodb:DescribeTable
-                Resource:
-                  - !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${DynamoDBTableName}"
-                  - !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${DynamoDBTableName}/index/*"
+        - !If
+          - UseS3
+          - PolicyName: S3StoragePolicy
+            PolicyDocument:
+              Version: '2012-10-17'
+              Statement:
+                - Effect: Allow
+                  Action:
+                    - s3:PutObject
+                    - s3:GetObject
+                    - s3:ListBucket
+                  Resource:
+                    - !If 
+                      - CreateS3Bucket
+                      - !Sub "arn:aws:s3:::${MetricsS3Bucket}"
+                      - !Sub "arn:aws:s3:::${S3BucketName}"
+                    - !If 
+                      - CreateS3Bucket
+                      - !Sub "arn:aws:s3:::${MetricsS3Bucket}/*"
+                      - !Sub "arn:aws:s3:::${S3BucketName}/*"
+          - !Ref 'AWS::NoValue'
+        - !If
+          - UseDynamoDB
+          - PolicyName: DynamoDBStoragePolicy
+            PolicyDocument:
+              Version: '2012-10-17'
+              Statement:
+                - Effect: Allow
+                  Action:
+                    - dynamodb:PutItem
+                    - dynamodb:GetItem
+                    - dynamodb:Query
+                    - dynamodb:Scan
+                    - dynamodb:CreateTable
+                    - dynamodb:DescribeTable
+                  Resource:
+                    - !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${DynamoDBTableName}"
+                    - !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${DynamoDBTableName}/index/*"
+          - !Ref 'AWS::NoValue'
 
   # KMS Key for Lambda environment variables encryption
   LambdaKMSKey:
@@ -442,10 +447,10 @@ Resources:
       FunctionName: !Sub "${AWS::StackName}-ConnectQuotaMonitor"
       Handler: lambda_function.main
       Role: !GetAtt LambdaExecutionRole.Arn
-      Runtime: python3.9
+      Runtime: python3.13
       Timeout: !Ref LambdaTimeout
       MemorySize: !Ref LambdaMemory
-      ReservedConcurrencyLimit: 5
+      #ReservedConcurrencyLimit: 5
       DeadLetterConfig:
         TargetArn: !GetAtt LambdaDeadLetterQueue.Arn
       KmsKeyArn: !GetAtt LambdaKMSKey.Arn

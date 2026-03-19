@@ -804,6 +804,136 @@ ENHANCED_CONNECT_QUOTA_METRICS = {
         'context_required': True
     },
     
+    # ===== AMAZON LEX SERVICE =====
+    'L-36FA8BD2': {  # Bots per account (Lex V2)
+        'name': 'Bots per account (Lex V2)',
+        'category': 'INTEGRATIONS',
+        'scope': 'ACCOUNT',
+        'method': 'service_quotas',
+        'service': 'lexv2-models',
+        'default_limit': 100,
+        'context_required': False
+    },
+    'L-ED50DA7C': {  # Sample utterances per intent (Lex V2)
+        'name': 'Sample utterances per intent (Lex V2)',
+        'category': 'INTEGRATIONS',
+        'scope': 'ACCOUNT',
+        'method': 'service_quotas',
+        'service': 'lexv2-models',
+        'default_limit': 1500,
+        'context_required': False
+    },
+    'L-77D6C60C': {  # Sample utterances per slot (Lex V2)
+        'name': 'Sample utterances per slot (Lex V2)',
+        'category': 'INTEGRATIONS',
+        'scope': 'ACCOUNT',
+        'method': 'service_quotas',
+        'service': 'lexv2-models',
+        'default_limit': 10000,
+        'context_required': False
+    },
+    
+    # ===== CUSTOMER PROFILES SERVICE =====
+    'L-6603B252': {  # Customer Profiles domain count
+        'name': 'Customer Profiles domains per account',
+        'category': 'CUSTOMER_PROFILES',
+        'scope': 'ACCOUNT',
+        'method': 'service_quotas',
+        'service': 'customer-profiles',
+        'default_limit': 100,
+        'context_required': False
+    },
+    'L-A7ED412C': {  # Keys per object type
+        'name': 'Keys per object type',
+        'category': 'CUSTOMER_PROFILES',
+        'scope': 'ACCOUNT',
+        'method': 'service_quotas',
+        'service': 'customer-profiles',
+        'default_limit': 10,
+        'context_required': False
+    },
+    'L-3217D1F1': {  # Maximum expiration in days
+        'name': 'Maximum expiration in days',
+        'category': 'CUSTOMER_PROFILES',
+        'scope': 'ACCOUNT',
+        'method': 'service_quotas',
+        'service': 'customer-profiles',
+        'default_limit': 1098,
+        'context_required': False
+    },
+    'L-0A1E1791': {  # Event triggers per domain
+        'name': 'Event triggers per domain',
+        'category': 'CUSTOMER_PROFILES',
+        'scope': 'ACCOUNT',
+        'method': 'service_quotas',
+        'service': 'customer-profiles',
+        'default_limit': 10,
+        'context_required': False
+    },
+    'L-4A5ECB8E': {  # Number of integrations
+        'name': 'Integrations per domain',
+        'category': 'CUSTOMER_PROFILES',
+        'scope': 'ACCOUNT',
+        'method': 'service_quotas',
+        'service': 'customer-profiles',
+        'default_limit': 50,
+        'context_required': False
+    },
+    'L-DFAEAED3': {  # Profile history records per profile
+        'name': 'Profile history records per profile',
+        'category': 'CUSTOMER_PROFILES',
+        'scope': 'ACCOUNT',
+        'method': 'service_quotas',
+        'service': 'customer-profiles',
+        'default_limit': 100,
+        'context_required': False
+    },
+    'L-B6E9F054': {  # Recommenders per domain
+        'name': 'Recommenders per domain',
+        'category': 'CUSTOMER_PROFILES',
+        'scope': 'ACCOUNT',
+        'method': 'service_quotas',
+        'service': 'customer-profiles',
+        'default_limit': 10,
+        'context_required': False
+    },
+    'L-B59352A0': {  # Segment snapshots per day
+        'name': 'Segment snapshots per day',
+        'category': 'CUSTOMER_PROFILES',
+        'scope': 'ACCOUNT',
+        'method': 'service_quotas',
+        'service': 'customer-profiles',
+        'default_limit': 5,
+        'context_required': False
+    },
+    'L-63975AF3': {  # Size of all objects for a profile
+        'name': 'Size of all objects for a profile (KB)',
+        'category': 'CUSTOMER_PROFILES',
+        'scope': 'ACCOUNT',
+        'method': 'service_quotas',
+        'service': 'customer-profiles',
+        'default_limit': 51200,
+        'context_required': False
+    },
+    'L-14092FF4': {  # Object types per domain
+        'name': 'Object types per domain',
+        'category': 'CUSTOMER_PROFILES',
+        'scope': 'ACCOUNT',
+        'method': 'service_quotas',
+        'service': 'customer-profiles',
+        'default_limit': 100,
+        'context_required': False
+    },
+    'L-E17DC7C3': {  # Objects per profile
+        'name': 'Objects per profile',
+        'category': 'CUSTOMER_PROFILES',
+        'scope': 'ACCOUNT',
+        'method': 'service_quotas',
+        'service': 'customer-profiles',
+        'default_limit': 1000,
+        'context_required': False
+    },
+    
     # ===== API RATE LIMITS =====
     # Based on AWS Connect Service Limits documentation
     # https://docs.aws.amazon.com/connect/latest/adminguide/amazon-connect-service-limits.html

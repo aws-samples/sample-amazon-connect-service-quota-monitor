@@ -190,12 +190,12 @@ Resources:
   DeploymentS3Bucket:
     Type: AWS::S3::Bucket
     Condition: CreateDeploymentBucket
-    DeletionPolicy: Retain
+    DeletionPolicy: Delete
     Properties:
       BucketName: !If 
         - UseProvidedDeploymentBucket
         - !Ref DeploymentBucketName
-        - !Sub "connectquotamonitor-deploy-${AWS::AccountId}-${AWS::Region}"
+        - !Sub "connectquotamonitor-deploy-${AWS::AccountId}"
       BucketEncryption:
         ServerSideEncryptionConfiguration:
           - ServerSideEncryptionByDefault:
@@ -730,11 +730,8 @@ Resources:
           USE_S3_STORAGE: !Ref UseS3Storage
           DEPLOYMENT_METHOD: !Ref DeploymentMethod
           DEPLOYMENT_BUCKET: !If [CreateDeploymentBucket, !Ref DeploymentS3Bucket, '']
-      Code: !If
-        - UseS3Deployment
-        - S3Bucket: !If [CreateDeploymentBucket, !Ref DeploymentS3Bucket, !Ref DeploymentBucketName]
-          S3Key: 'lambda-deployment.zip'
-        - ZipFile: |
+      Code:
+        ZipFile: |
             # Enhanced Placeholder Lambda function for Connect Quota Monitor
             # This is a placeholder that will be replaced with the actual monitoring code
             import json

@@ -15,6 +15,10 @@ response.json
 *.tmp
 *.log
 
+# Reports and Output Files
+reports/
+connect_quota_report.json
+
 # Lambda Deployment Packages
 lambda-package/
 lambda-deployment.zip

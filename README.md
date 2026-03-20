@@ -1,10 +1,10 @@
 # Amazon Connect Service Quota Monitor - Enhanced Edition
 
-A comprehensive solution that monitors **70+ Amazon Connect service quotas** across all Connect services with dynamic instance discovery, consolidated alerting, intelligent deployment capabilities, and **API throttling detection**.
+A comprehensive solution that monitors **130+ Amazon Connect service quotas** across all Connect services with dynamic instance discovery, consolidated alerting, intelligent deployment capabilities, and **API throttling detection**.
 
 ## 🚀 Key Features
 
-- **Comprehensive Coverage**: Monitors 70+ quotas across 15+ service categories
+- **Comprehensive Coverage**: Monitors 130+ quotas across 15+ service categories
 - **API Throttling Detection**: Real-time monitoring of API rate limit violations
 - **Dynamic Discovery**: Automatically discovers Connect instances (no hardcoded IDs)
 - **Consolidated Alerts**: One email per instance with all violations
@@ -188,15 +188,19 @@ This will:
 
 #### What Gets Monitored
 
-**API Operations** (20 most common):
-- CreateUser, UpdateUser, ListUsers, DescribeUser
-- CreateQueue, ListQueues, DescribeQueue
-- CreateContactFlow, UpdateContactFlowContent, ListContactFlows
-- CreateRoutingProfile, ListRoutingProfiles
-- GetCurrentMetricData, GetMetricData
-- StartChatContact, StartTaskContact
-- GetContactAttributes, UpdateContactAttributes
-- ListPhoneNumbersV2, DescribeContact
+**API Operations** (40+ monitored in quota monitor):
+- **Core Connect APIs**: CreateUser, UpdateUser, ListUsers, DescribeUser
+- **Queue Management**: CreateQueue, ListQueues, DescribeQueue
+- **Contact Flow APIs**: CreateContactFlow, UpdateContactFlowContent, ListContactFlows
+- **Routing**: CreateRoutingProfile, ListRoutingProfiles
+- **Metrics APIs**: GetCurrentMetricData, GetMetricData, GetMetricDataV2, GetCurrentUserData
+- **Contact APIs**: StartChatContact, StartTaskContact, StopContact, UpdateContact
+- **Contact Attributes**: GetContactAttributes, UpdateContactAttributes
+- **Participant APIs**: CreateParticipant, DisconnectParticipant, SendMessage, SendEvent
+- **Integration APIs**: SendChatIntegrationEvent, CreateIntegrationAssociation
+- **Contact Lens APIs**: ListRealtimeContactAnalysisSegments (V1 & V2)
+- **Cases APIs**: CreateCase, SearchCases, GetCase, UpdateCase, ListCasesForContact
+- And many more...
 
 #### Usage Examples
 
@@ -454,7 +458,7 @@ aws logs tail /aws/lambda/ConnectAPIThrottlingMonitor --since 1h
 ### Quota Monitor
 - **Execution Time**: 60-120 seconds (depending on instance count)
 - **Memory Usage**: ~100-150 MB (512 MB allocated)
-- **Quota Coverage**: 70+ quotas across all Connect services
+- **Quota Coverage**: 130+ quotas across all Connect services
 - **Scalability**: Handles multiple instances automatically
 - **Rate Limiting**: Built-in retry logic and graceful degradation
 
@@ -462,7 +466,7 @@ aws logs tail /aws/lambda/ConnectAPIThrottlingMonitor --since 1h
 - **Execution Time**: 10-30 seconds
 - **Memory Usage**: ~50-100 MB (256 MB allocated)
 - **Lookback Period**: 1-24 hours configurable
-- **API Coverage**: 20+ most common Connect APIs
+- **API Coverage**: 40+ API operations monitored
 - **Execution Cost**: < $0.20/month
 
 ## 🎯 Success Validation

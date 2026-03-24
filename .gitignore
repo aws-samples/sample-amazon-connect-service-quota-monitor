@@ -1,44 +1,17 @@
-# AWS Credentials and Config
-.aws/
-aws-credentials
-*.pem
-*.key
+# Keep these files local (don't commit them)
+.gitignore
+SOLUTION_OVERVIEW.md
 
-# Environment Variables
-.env
-.env.local
-.env.production
+# JSON reports
+*.json
+reports/*.json
+connect_quota_report*.json
 
-# Test and Temporary Files
-test-response.json
-response.json
-*.tmp
-*.log
-
-# Reports and Output Files
-reports/
-connect_quota_report.json
-
-# Lambda Deployment Packages
-lambda-package/
-lambda-deployment.zip
+# Deployment packages
 *.zip
-
-# IDE and Editor Files
-.vscode/
-.idea/
-*.swp
-*.swo
-*~
-
-# OS Generated Files
-.DS_Store
-.DS_Store?
-._*
-.Spotlight-V100
-.Trashes
-ehthumbs.db
-Thumbs.db
+lambda-deployment.zip
+lambda-deployment-package/
+api-throttling-monitor.zip
 
 # Python
 __pycache__/
@@ -46,33 +19,34 @@ __pycache__/
 *$py.class
 *.so
 .Python
-build/
-develop-eggs/
-dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
 *.egg-info/
-.installed.cfg
-*.egg
+dist/
+build/
 
-# CloudFormation (keep main template)
-# *.template
+# Virtual environments
+venv/
+env/
+ENV/
 
-# S3 Deployment Artifacts
-deployment-*.zip
-s3-deployment-*
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
 
-# Backup Files
+# OS
+.DS_Store
+Thumbs.db
+
+# Backup files
 *.bak
-*.backup
+lambda_function.py.bak
 
-# Local Configuration
-config.local.*
-settings.local.*
+# Test files
+test-response.json
+response.json
+/tmp/
+
+# Logs
+*.log

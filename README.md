@@ -1,10 +1,10 @@
 # Amazon Connect Service Quota Monitor - Enhanced Edition
 
-A comprehensive solution that monitors **130+ Amazon Connect service quotas** across all Connect services with dynamic instance discovery, consolidated alerting, intelligent deployment capabilities, and **API throttling detection**.
+A comprehensive solution that monitors **all 287 Amazon Connect service quotas** across all Connect services with dynamic instance discovery, consolidated alerting, intelligent deployment capabilities, and **API throttling detection**.
 
 ## 🚀 Key Features
 
-- **Comprehensive Coverage**: Monitors 130+ quotas across 15+ service categories
+- **Comprehensive Coverage**: Monitors all 287 quotas (47 capacity quotas + 240 API rate limits)
 - **API Throttling Detection**: Real-time monitoring of API rate limit violations
 - **Dynamic Discovery**: Automatically discovers Connect instances (no hardcoded IDs)
 - **Consolidated Alerts**: One email per instance with all violations
@@ -458,7 +458,7 @@ aws logs tail /aws/lambda/ConnectAPIThrottlingMonitor --since 1h
 ### Quota Monitor
 - **Execution Time**: 60-120 seconds (depending on instance count)
 - **Memory Usage**: ~100-150 MB (512 MB allocated)
-- **Quota Coverage**: 130+ quotas across all Connect services
+- **Quota Coverage**: 287 quotas total (47 capacity quotas via Service Quotas API)
 - **Scalability**: Handles multiple instances automatically
 - **Rate Limiting**: Built-in retry logic and graceful degradation
 

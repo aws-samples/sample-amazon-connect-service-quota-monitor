@@ -1,10 +1,10 @@
-# Amazon Connect Service Quota Monitor - Enhanced Edition
+# Amazon Connect Service Quota Monitor
 
-A comprehensive solution that monitors **all 287 Amazon Connect service quotas** across all Connect services with dynamic instance discovery, consolidated alerting, intelligent deployment capabilities, **pre-throttle utilization monitoring**, and **API throttling detection**.
+A comprehensive solution that monitors **287 Amazon Connect service quotas** across all Connect services with dynamic instance discovery, consolidated alerting, intelligent deployment capabilities, **pre-throttle utilization monitoring**, and **API throttling detection**.
 
 ## 🚀 Key Features
 
-- **Comprehensive Coverage**: Monitors all 287 quotas (47 capacity quotas + 240 API rate limits)
+- **Comprehensive Coverage**: Monitors 287 quotas (47 capacity quotas + 240 API rate limits)
 - **Pre-Throttle Utilization Alerts (Proactive Utilization Monitor)**: Detects APIs approaching rate limits BEFORE throttling occurs
 - **Peak-Hour Aware**: Uses 1-minute CloudWatch granularity to catch real per-second spikes, not hourly averages
 - **API Throttling Detection (Throttle Detection)**: Real-time monitoring of API rate limit violations
@@ -426,7 +426,7 @@ s3://bucket/
 aws lambda update-function-configuration \
   --function-name ConnectQuotaMonitor-EnhancedConnectQuotaMonitor \
   --environment Variables='{
-    "THRESHOLD_PERCENTAGE": "85",
+    "THRESHOLD_PERCENTAGE": "80",
     "ALERT_SNS_TOPIC_ARN": "arn:aws:sns:region:account:topic",
     "USE_S3_STORAGE": "true",
     "USE_DYNAMODB": "true"

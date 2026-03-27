@@ -7,7 +7,7 @@ import sys
 
 # Set environment variables for testing
 os.environ['THRESHOLD_PERCENTAGE'] = '1'  # Set to 1% to trigger alerts
-os.environ['ALERT_SNS_TOPIC_ARN'] = 'arn:aws:sns:us-west-2:745351468190:test-connect-quota-alerts'
+os.environ['ALERT_SNS_TOPIC_ARN'] = os.environ.get('ALERT_SNS_TOPIC_ARN', 'arn:aws:sns:us-east-1:123456789012:test-connect-quota-alerts')
 
 # Import the lambda function
 import lambda_function

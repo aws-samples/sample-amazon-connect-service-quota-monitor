@@ -47,6 +47,16 @@ lambda_function.py.bak
 test-response.json
 response.json
 /tmp/
+tests/test_quota_limit_retrieval.py
+
+# Analysis scripts
+analyze_quota_coverage.py
+Quotas_Consolidated_Updated.xlsx
+QUOTA_COVERAGE_REPORT.md
+
+# Best practices documents (internal use)
+CONNECT_BEST_PRACTICES.md
+*_BEST_PRACTICES*.md
 
 # Logs
 *.log

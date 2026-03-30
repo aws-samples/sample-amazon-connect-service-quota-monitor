@@ -1,11 +1,13 @@
-# Amazon Connect Service Quota Monitor - Enhanced Edition
+# Amazon Connect Service Quota Monitor
 
-A comprehensive solution that monitors **all 287 Amazon Connect service quotas** across all Connect services with dynamic instance discovery, consolidated alerting, intelligent deployment capabilities, and **API throttling detection**.
+A comprehensive solution that monitors **287 Amazon Connect service quotas** across all Connect services with dynamic instance discovery, consolidated alerting, intelligent deployment capabilities, **pre-throttle utilization monitoring**, and **API throttling detection**.
 
 ## 🚀 Key Features
 
-- **Comprehensive Coverage**: Monitors all 287 quotas (47 capacity quotas + 240 API rate limits)
-- **API Throttling Detection**: Real-time monitoring of API rate limit violations
+- **Comprehensive Coverage**: Monitors 287 quotas (47 capacity quotas + 240 API rate limits)
+- **Pre-Throttle Utilization Alerts (Proactive Utilization Monitor)**: Detects APIs approaching rate limits BEFORE throttling occurs
+- **Peak-Hour Aware**: Uses 1-minute CloudWatch granularity to catch real per-second spikes, not hourly averages
+- **API Throttling Detection (Throttle Detection)**: Real-time monitoring of API rate limit violations
 - **Dynamic Discovery**: Automatically discovers Connect instances (no hardcoded IDs)
 - **Consolidated Alerts**: One email per instance with all violations
 - **Flexible Storage**: Supports S3, DynamoDB, or both
@@ -34,7 +36,16 @@ A comprehensive solution that monitors **all 287 Amazon Connect service quotas**
 - **Forecasting**: Forecast groups, Schedules, Data retention
 - **API Rate Limits**: Various API request rates
 
-### API Throttling Monitoring
+### API Throttling Monitoring (Proactive Utilization Monitor + Throttle Detection)
+
+**Proactive Utilization Monitor — Pre-Throttle Utilization (NEW):**
+- **Proactive detection** of APIs approaching rate limits BEFORE throttling occurs
+- **Peak-hour aware**: Uses 1-minute CloudWatch periods to catch real per-second spikes during business hours, not hourly averages that hide peaks
+- **Dynamic quota lookup**: Fetches current rate limits from Service Quotas API — no hardcoded values
+- **Multi-threshold alerts**: WARNING at 70%, CRITICAL at 90% of per-second limit
+- **Batch metric retrieval**: Uses CloudWatch `GetMetricData` (up to 500 metrics per call) for efficiency
+
+**Throttle Detection — Throttle Detection (existing):**
 - **Real-time throttling detection** via CloudWatch metrics
 - **Per-API tracking** of throttle rates and patterns
 - **Historical analysis** of throttling trends
@@ -60,16 +71,17 @@ A comprehensive solution that monitors **all 287 Amazon Connect service quotas**
                        │   (Optional)    │
                        └─────────────────┘
 
-┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
-│   EventBridge   │───▶│  API Throttling  │───▶│  SNS Topic      │
-│   (Hourly)      │    │  Monitor Lambda  │    │  (Alerts)       │
-└─────────────────┘    └──────────────────┘    └─────────────────┘
-                                │
-                                ▼
-                       ┌─────────────────┐
-                       │   CloudWatch    │
-                       │   Metrics       │
-                       └─────────────────┘
+┌─────────────────┐    ┌──────────────────────────────┐    ┌─────────────────┐
+│   EventBridge   │───▶│  API Throttling Monitor       │───▶│  SNS Topic      │
+│   (Hourly)      │    │  Lambda (Proactive Utilization Monitor + Throttle Detection)  │    │  (Alerts)       │
+└─────────────────┘    └──────────────────────────────┘    └─────────────────┘
+                          │                    │
+                          ▼                    ▼
+                ┌──────────────────┐  ┌─────────────────┐
+                │  Service Quotas  │  │   CloudWatch    │
+                │  API (limits)    │  │   AWS/Usage +   │
+                │                  │  │   AWS/Connect   │
+                └──────────────────┘  └─────────────────┘
 ```
 
 ## 📋 Prerequisites
@@ -164,14 +176,16 @@ The API throttling monitor provides **real-time detection** of API rate limit vi
 
 #### Why Monitor API Throttling?
 
-| Type | Example | Monitoring Method |
-|------|---------|-------------------|
+| Type | Example | Monitoring Tier |
+|------|---------|-----------------|
 | **Capacity Quota** | "100 users per instance" | ✅ Service Quotas API (quota monitor) |
-| **API Rate Limit** | "2 CreateUser calls/sec" | ✅ CloudWatch metrics (throttling monitor) |
+| **API Rate Limit — approaching** | "GetContactAttributes at 85% of 60/s" | ✅ Proactive Utilization Monitor: AWS/Usage metrics vs quota limits (NEW) |
+| **API Rate Limit — breached** | "147 CreateUser calls throttled" | ✅ Throttle Detection: CloudWatch throttle metrics |
 
-**Key Difference:**
-- Capacity quotas are **cumulative** - you can fill them up
-- Rate limits **reset every second** - you can't "check" them, only detect throttling
+**Why Proactive Utilization Monitor matters:**
+- Throttle Detection detects throttling **after** it happens — callers are already impacted
+- Proactive Utilization Monitor catches APIs at 70-90% of their limit **before** throttling occurs
+- Uses **1-minute CloudWatch periods** to find real peak-second rates during business hours, not hourly averages that hide spikes (e.g., an API averaging 3/s over an hour may spike to 40/s at 10am)
 
 #### Deploy Throttling Monitor
 
@@ -181,14 +195,20 @@ chmod +x deploy_throttling_monitor.sh
 ```
 
 This will:
-1. ✅ Create Lambda function: `ConnectAPIThrottlingMonitor`
+1. ✅ Create Lambda function: `ConnectAPIThrottlingMonitor` (512 MB, 600s timeout)
 2. ✅ Schedule it to run every hour via EventBridge
 3. ✅ Configure SNS alerts (uses same topic as quota monitor)
-4. ✅ Test the deployment
+4. ✅ Run both Proactive Utilization Monitor (utilization) and Throttle Detection (throttle detection)
+5. ✅ Test the deployment
 
 #### What Gets Monitored
 
-**API Operations** (40+ monitored in quota monitor):
+**Proactive Utilization Monitor — Rate Limit Utilization (all Connect API quotas):**
+- Dynamically fetches ALL rate limit quotas from Service Quotas API (no hardcoded list)
+- Compares actual peak usage from `AWS/Usage` CloudWatch namespace against each limit
+- Alerts at WARNING (≥70%) and CRITICAL (≥90%) of per-second rate limit
+
+**Throttle Detection — Throttle Detection (40+ API operations):**
 - **Core Connect APIs**: CreateUser, UpdateUser, ListUsers, DescribeUser
 - **Queue Management**: CreateQueue, ListQueues, DescribeQueue
 - **Contact Flow APIs**: CreateContactFlow, UpdateContactFlowContent, ListContactFlows
@@ -208,16 +228,22 @@ This will:
 # View throttling monitor logs
 aws logs tail /aws/lambda/ConnectAPIThrottlingMonitor --follow
 
-# Manual test (check last 24 hours)
+# Manual test — both tiers (last 24 hours)
 aws lambda invoke \
   --function-name ConnectAPIThrottlingMonitor \
   --payload '{"hours": 24}' \
   response.json
 
-# Check specific time period (last 6 hours)
+# Run only Proactive Utilization Monitor utilization check (skip throttle detection)
 aws lambda invoke \
   --function-name ConnectAPIThrottlingMonitor \
-  --payload '{"hours": 6}' \
+  --payload '{"hours": 6, "skip_throttling": true}' \
+  response.json
+
+# Run only Throttle Detection throttle detection (skip utilization)
+aws lambda invoke \
+  --function-name ConnectAPIThrottlingMonitor \
+  --payload '{"hours": 1, "skip_utilization": true}' \
   response.json
 ```
 
@@ -254,7 +280,46 @@ SUMMARY:
 • Average utilization: 16.8%
 ```
 
-### API Throttling Alert
+### Rate Limit Utilization Alert (Proactive Utilization Monitor — NEW)
+```
+Subject: 📊 Connect API Rate Limit Utilization — 1 critical, 2 warning
+
+Amazon Connect API Rate Limit Utilization Alert
+(Pre-throttle warning — APIs approaching limits)
+============================================================
+
+🔴 GetContactAttributes:
+   Limit: 60/s
+   Peak:  52.3/s (87.2% of limit)
+   Avg:   9.1/s
+   Peak at: 2026-03-19 14:23 UTC
+   Calls in period: 823,041
+
+🟡 DescribeContact:
+   Limit: 20/s
+   Peak:  15.8/s (79.0% of limit)
+   Avg:   8.9/s
+   Peak at: 2026-03-19 14:25 UTC
+   Calls in period: 769,422
+
+🟡 GetCurrentMetricData:
+   Limit: 5/s
+   Peak:  3.7/s (74.0% of limit)
+   Avg:   3.8/s
+   Peak at: 2026-03-19 10:02 UTC
+   Calls in period: 341,208
+
+============================================================
+Recommended Actions:
+• CRITICAL (≥90%): Request quota increase immediately
+• WARNING (≥70%): Evaluate caching or request increase proactively
+• For cacheable APIs (Describe*, List*): implement DynamoDB cache
+• For real-time APIs (GetCurrentMetricData): reduce polling frequency
+
+Time: 2026-03-19 19:42:00 UTC
+```
+
+### API Throttling Alert (Throttle Detection)
 ```
 Subject: ⚠️ Connect API Throttling Detected - 147 throttled calls
 
@@ -361,7 +426,7 @@ s3://bucket/
 aws lambda update-function-configuration \
   --function-name ConnectQuotaMonitor-EnhancedConnectQuotaMonitor \
   --environment Variables='{
-    "THRESHOLD_PERCENTAGE": "85",
+    "THRESHOLD_PERCENTAGE": "80",
     "ALERT_SNS_TOPIC_ARN": "arn:aws:sns:region:account:topic",
     "USE_S3_STORAGE": "true",
     "USE_DYNAMODB": "true"
@@ -462,12 +527,13 @@ aws logs tail /aws/lambda/ConnectAPIThrottlingMonitor --since 1h
 - **Scalability**: Handles multiple instances automatically
 - **Rate Limiting**: Built-in retry logic and graceful degradation
 
-### API Throttling Monitor
-- **Execution Time**: 10-30 seconds
-- **Memory Usage**: ~50-100 MB (256 MB allocated)
+### API Throttling Monitor (Proactive Utilization Monitor + Throttle Detection)
+- **Execution Time**: 30-90 seconds (Proactive Utilization Monitor fetches quotas + batch CloudWatch metrics)
+- **Memory Usage**: ~100-200 MB (512 MB allocated)
 - **Lookback Period**: 1-24 hours configurable
-- **API Coverage**: 40+ API operations monitored
-- **Execution Cost**: < $0.20/month
+- **Proactive Utilization Monitor Coverage**: All Connect API rate limit quotas (dynamically discovered)
+- **Throttle Detection Coverage**: 40+ API operations monitored for throttling
+- **Execution Cost**: < $0.50/month
 
 ## 🎯 Success Validation
 
@@ -510,16 +576,20 @@ aws logs tail /aws/lambda/ConnectAPIThrottlingMonitor --since 1h
 
 ### Monitoring Approach Comparison
 
-| Feature | Quota Monitor | Throttling Monitor |
-|---------|---------------|-------------------|
-| **Monitors** | Resource capacity | API rate limits |
-| **Checks** | Current usage vs limit | Actual throttling events |
-| **Data Source** | Service Quotas API | CloudWatch metrics |
-| **Alert When** | Usage > 80% of limit | Throttling detected |
-| **Best For** | Capacity planning | API performance |
-| **Examples** | "90/100 users" | "147 CreateUser calls throttled" |
+| Feature | Quota Monitor | Utilization Monitor | Throttle Detection |
+|---------|--------------|---------------------|-------------------|
+| **Monitors** | Resource capacity | API rate limit utilization | Actual throttling events |
+| **Checks** | Current count vs limit | Peak calls/sec vs limit/sec | Throttled call count |
+| **Data Source** | Service Quotas API | Service Quotas + AWS/Usage | AWS/Connect CloudWatch |
+| **Alert When** | Usage > 80% of limit | Peak rate ≥ 70% of limit | Throttling detected |
+| **Granularity** | Point-in-time count | 1-minute peak (catches spikes) | Hourly aggregate |
+| **Best For** | Capacity planning | Proactive rate limit management | Incident detection |
+| **Examples** | "90/100 users" | "GetContactAttributes at 85% of 60/s" | "147 CreateUser calls throttled" |
 
-**Both monitors are complementary and solve different problems!**
+**All three monitors are complementary:**
+- Quota Monitor prevents running out of resources
+- Utilization Monitor prevents throttling before it impacts callers (proactive)
+- Throttle Detection catches throttling that slipped through (reactive)
 
 ## 📞 Support
 

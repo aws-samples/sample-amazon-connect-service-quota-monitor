@@ -3322,7 +3322,11 @@ class ConnectQuotaMonitor:
         # Method 4: Get metrics from CloudWatch API usage
         elif method == 'cloudwatch_api':
             current_usage = self._monitor_via_cloudwatch_api(instance_id, metric_config)
-            # For API rate limits, try to get actual applied quota from Service Quotas API
+        
+        # CRITICAL FIX: Fetch actual applied quota limit for ALL monitoring methods
+        # This ensures we use customer's approved limits, not AWS defaults
+        # Without this, customers with quota increases get false alerts
+        if method in ['api_count', 'api_count_multi', 'cloudwatch', 'cloudwatch_api']:
             if quota_code:
                 actual_quota = self._get_actual_quota_limit(service, quota_code, instance_id, context_required)
                 if actual_quota is not None and actual_quota > 0:

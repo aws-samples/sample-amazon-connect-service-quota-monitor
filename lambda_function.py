@@ -4972,12 +4972,23 @@ def main():
             
             with open(report_file, 'w') as f:
                 json.dump(report_data, f, indent=2, default=str)
-            
+
             # Also save to the standard location for backward compatibility
             with open('connect_quota_report.json', 'w') as f:
                 json.dump(report_data, f, indent=2, default=str)
-            
+
             print(f"\nDetailed report saved to {report_file}")
+            
+            # Generate HTML report automatically
+            try:
+                import quota_report_to_html
+                html_file = report_file.replace('.json', '.html')
+                html_content = quota_report_to_html.generate_html(report_data)
+                with open(html_file, 'w') as f:
+                    f.write(html_content)
+                print(f"HTML dashboard generated: {html_file}")
+            except Exception as e:
+                logger.warning(f"Failed to generate HTML report: {str(e)}")
         
         if results.get('violations_found', 0) > 0:
             print(f"\nWARNING: {results.get('violations_found', 0)} quotas exceeded the {threshold}% threshold!")

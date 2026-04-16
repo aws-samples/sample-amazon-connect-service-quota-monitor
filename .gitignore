@@ -1,10 +1,11 @@
 # Keep these files local (don't commit them)
-.gitignore
 SOLUTION_OVERVIEW.md
 
-# JSON reports
+# JSON reports and HTML reports
 *.json
+reports/
 reports/*.json
+reports/*.html
 connect_quota_report*.json
 
 # Deployment packages
@@ -24,7 +25,7 @@ dist/
 build/
 
 # Virtual environments
-venv/
+venv/a
 env/
 ENV/
 
@@ -43,20 +44,32 @@ Thumbs.db
 *.bak
 lambda_function.py.bak
 
-# Test files
+# Test files and validation (internal development only)
 test-response.json
 response.json
+test_alert_mechanism.py
 /tmp/
-tests/test_quota_limit_retrieval.py
+tests/
+*.xlsx
+*.xls
 
-# Analysis scripts
+# Internal analysis and validation scripts
 analyze_quota_coverage.py
-Quotas_Consolidated_Updated.xlsx
+validate_against_aws_reference.py
+apply_quota_fixes.py
+create_coverage_report.py
 QUOTA_COVERAGE_REPORT.md
+QUOTA_COVERAGE_ANALYSIS.md
+INTERNAL_QUOTA_ANALYSIS.md
+QUOTA_MONITORING_STATUS.xlsx
+UNSUPPORTED_QUOTAS_EXPLANATION.md
 
 # Best practices documents (internal use)
 CONNECT_BEST_PRACTICES.md
 *_BEST_PRACTICES*.md
+
+# Backup files created during fixes
+*.backup
 
 # Logs
 *.log

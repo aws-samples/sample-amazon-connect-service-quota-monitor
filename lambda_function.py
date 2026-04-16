@@ -184,7 +184,7 @@ ENHANCED_CONNECT_QUOTA_METRICS = {
         'service': 'connect',
         'api': 'list_users',
         'default_limit': 500,
-        'context_required': True
+        'context_required': False
     },
     'L-F325A715': {  # Security profiles per instance
         'name': 'Security profiles per instance',
@@ -194,7 +194,7 @@ ENHANCED_CONNECT_QUOTA_METRICS = {
         'service': 'connect',
         'api': 'list_security_profiles',
         'default_limit': 100,
-        'context_required': True
+        'context_required': False
     },
     'L-D68AAAE4': {  # User hierarchy groups per instance
         'name': 'User hierarchy groups per instance',
@@ -204,7 +204,7 @@ ENHANCED_CONNECT_QUOTA_METRICS = {
         'service': 'connect',
         'api': 'describe_user_hierarchy_structure',
         'default_limit': 5,
-        'context_required': True
+        'context_required': False
     },
     'L-E3D2F503': {  # AWS Lambda functions per instance
         'name': 'AWS Lambda functions per instance',
@@ -214,7 +214,7 @@ ENHANCED_CONNECT_QUOTA_METRICS = {
         'service': 'connect',
         'api': 'list_lambda_functions',
         'default_limit': 50,
-        'context_required': True
+        'context_required': False
     },
     'L-8F812903': {  # Phone numbers per instance
         'name': 'Phone numbers per instance',
@@ -224,7 +224,7 @@ ENHANCED_CONNECT_QUOTA_METRICS = {
         'service': 'connect',
         'api': 'list_phone_numbers_v2',
         'default_limit': 10,
-        'context_required': True
+        'context_required': False
     },
     'L-22922690': {  # Contact flows per instance
         'name': 'Contact flows per instance',
@@ -234,7 +234,7 @@ ENHANCED_CONNECT_QUOTA_METRICS = {
         'service': 'connect',
         'api': 'list_contact_flows',
         'default_limit': 100,
-        'context_required': True
+        'context_required': False
     },
     'L-19755C7E': {  # Flow modules per instance
         'name': 'Flow modules per instance',
@@ -244,7 +244,7 @@ ENHANCED_CONNECT_QUOTA_METRICS = {
         'service': 'connect',
         'api': 'list_contact_flow_modules',
         'default_limit': 50,
-        'context_required': True
+        'context_required': False
     },
     'L-3828FBF0': {  # Predefined Attributes
         'name': 'Predefined Attributes',
@@ -254,7 +254,7 @@ ENHANCED_CONNECT_QUOTA_METRICS = {
         'service': 'connect',
         'api': 'list_predefined_attributes',
         'default_limit': 128,
-        'context_required': True
+        'context_required': False
     },
     'L-0865B754': {  # Prompts per instance
         'name': 'Prompts per instance',
@@ -264,7 +264,7 @@ ENHANCED_CONNECT_QUOTA_METRICS = {
         'service': 'connect',
         'api': 'list_prompts',
         'default_limit': 500,
-        'context_required': True
+        'context_required': False
     },
     'L-D945C9A8': {  # Agent status per instance
         'name': 'Agent status per instance',
@@ -288,7 +288,7 @@ ENHANCED_CONNECT_QUOTA_METRICS = {
         'namespace': 'AWS/Connect',
         'statistic': 'Maximum',
         'default_limit': 10,
-        'context_required': True
+        'context_required': False
     },
     'L-D4BA6F6E': {  # Concurrent active chats per instance
         'name': 'Concurrent active chats per instance',
@@ -300,7 +300,7 @@ ENHANCED_CONNECT_QUOTA_METRICS = {
         'namespace': 'AWS/Connect',
         'statistic': 'Maximum',
         'default_limit': 100,
-        'context_required': True
+        'context_required': False
     },
     'L-60553137': {  # Concurrent active tasks per instance
         'name': 'Concurrent active tasks per instance',
@@ -312,7 +312,7 @@ ENHANCED_CONNECT_QUOTA_METRICS = {
         'namespace': 'AWS/Connect',
         'statistic': 'Maximum',
         'default_limit': 2500,
-        'context_required': True
+        'context_required': False
     },
     'L-F4C86B27': {  # Email addresses per instance
         'name': 'Email addresses per instance',
@@ -321,19 +321,19 @@ ENHANCED_CONNECT_QUOTA_METRICS = {
         'method': 'service_quotas',
         'service': 'connect',
         'default_limit': 100,
-        'context_required': True
+        'context_required': False
     },
     'L-E908C3A1': {  # Concurrent campaign active calls per instance
         'name': 'Concurrent campaign active calls per instance',
         'category': 'CONTACT_HANDLING',
         'scope': 'INSTANCE',
         'method': 'cloudwatch',
-        'service': 'connect-campaigns',
+        'service': 'connectcampaigns',
         'metric_name': 'ConcurrentCampaignCalls',
         'namespace': 'AWS/ConnectCampaigns',
         'statistic': 'Maximum',
         'default_limit': 0,
-        'context_required': True
+        'context_required': False
     },
     'L-B117F12F': {  # Concurrent active emails per instance
         'name': 'Concurrent active emails per instance',
@@ -345,7 +345,7 @@ ENHANCED_CONNECT_QUOTA_METRICS = {
         'namespace': 'AWS/Connect',
         'statistic': 'Maximum',
         'default_limit': 1000,
-        'context_required': True
+        'context_required': False
     },
 
     # ===== ROUTING & QUEUES =====
@@ -357,7 +357,7 @@ ENHANCED_CONNECT_QUOTA_METRICS = {
         'service': 'connect',
         'api': 'list_queues',
         'default_limit': 50,
-        'context_required': True
+        'context_required': False
     },
     'L-516BC0EB': {  # Queues per routing profile per instance
         'name': 'Queues per routing profile per instance',
@@ -366,7 +366,7 @@ ENHANCED_CONNECT_QUOTA_METRICS = {
         'method': 'service_quotas',
         'service': 'connect',
         'default_limit': 50,
-        'context_required': True
+        'context_required': False
     },
     'L-68BBE2E8': {  # Quick connects per instance
         'name': 'Quick connects per instance',
@@ -376,7 +376,7 @@ ENHANCED_CONNECT_QUOTA_METRICS = {
         'service': 'connect',
         'api': 'list_quick_connects',
         'default_limit': 100,
-        'context_required': True
+        'context_required': False
     },
     'L-20CD02F7': {  # Hours of operation per instance
         'name': 'Hours of operation per instance',
@@ -386,7 +386,7 @@ ENHANCED_CONNECT_QUOTA_METRICS = {
         'service': 'connect',
         'api': 'list_hours_of_operations',
         'default_limit': 100,
-        'context_required': True
+        'context_required': False
     },
     'L-D3E7BE26': {  # Routing profiles per instance
         'name': 'Routing profiles per instance',
@@ -396,7 +396,7 @@ ENHANCED_CONNECT_QUOTA_METRICS = {
         'service': 'connect',
         'api': 'list_routing_profiles',
         'default_limit': 100,
-        'context_required': True
+        'context_required': False
     },
     'L-50375162': {  # Proficiencies per agent
         'name': 'Proficiencies per agent',
@@ -405,7 +405,7 @@ ENHANCED_CONNECT_QUOTA_METRICS = {
         'method': 'service_quotas',
         'service': 'connect',
         'default_limit': 20,
-        'context_required': True
+        'context_required': False
     },
 
     # ===== REPORTING =====
@@ -416,7 +416,7 @@ ENHANCED_CONNECT_QUOTA_METRICS = {
         'method': 'service_quotas',
         'service': 'connect',
         'default_limit': 2000,
-        'context_required': True
+        'context_required': False
     },
     'L-986AE5E3': {  # Scheduled reports per instance
         'name': 'Scheduled reports per instance',
@@ -425,7 +425,7 @@ ENHANCED_CONNECT_QUOTA_METRICS = {
         'method': 'service_quotas',
         'service': 'connect',
         'default_limit': 500,
-        'context_required': True
+        'context_required': False
     },
     'L-DA88F710': {  # Maximum active recording sessions from external voice systems per instance
         'name': 'Maximum active recording sessions from external voice systems per instance',
@@ -434,7 +434,7 @@ ENHANCED_CONNECT_QUOTA_METRICS = {
         'method': 'service_quotas',
         'service': 'connect',
         'default_limit': 100,
-        'context_required': True
+        'context_required': False
     },
 
     # ===== FORECASTING & CAPACITY =====
@@ -700,7 +700,7 @@ ENHANCED_CONNECT_QUOTA_METRICS = {
         'service': 'connect',
         'api': 'list_integration_associations',
         'default_limit': 50,
-        'context_required': True
+        'context_required': False
     },
     'L-790F20B4': {  # Event integration associations per instance
         'name': 'Event integration associations per instance',
@@ -709,7 +709,7 @@ ENHANCED_CONNECT_QUOTA_METRICS = {
         'method': 'service_quotas',
         'service': 'connect',
         'default_limit': 50,
-        'context_required': True
+        'context_required': False
     },
     'L-B93A6612': {  # Amazon Lex bots per instance
         'name': 'Amazon Lex bots per instance',
@@ -719,7 +719,7 @@ ENHANCED_CONNECT_QUOTA_METRICS = {
         'service': 'connect',
         'api': 'list_bots',
         'default_limit': 50,
-        'context_required': True
+        'context_required': False
     },
     'L-CCEA7427': {  # Amazon Lex V2 bot aliases per instance
         'name': 'Amazon Lex V2 bot aliases per instance',
@@ -728,7 +728,7 @@ ENHANCED_CONNECT_QUOTA_METRICS = {
         'method': 'service_quotas',
         'service': 'connect',
         'default_limit': 100,
-        'context_required': True
+        'context_required': False
     },
     'L-C7548958': {  # Amazon Pinpoint application integration associations per instance
         'name': 'Amazon Pinpoint application integration associations per instance',
@@ -737,7 +737,7 @@ ENHANCED_CONNECT_QUOTA_METRICS = {
         'method': 'service_quotas',
         'service': 'connect',
         'default_limit': 1,
-        'context_required': True
+        'context_required': False
     },
     'L-0AA82C05': {  # Cases domain integration associations per instance
         'name': 'Cases domain integration associations per instance',
@@ -746,7 +746,7 @@ ENHANCED_CONNECT_QUOTA_METRICS = {
         'method': 'service_quotas',
         'service': 'connect',
         'default_limit': 1,
-        'context_required': True
+        'context_required': False
     },
     'L-FFE16A0F': {  # Connect AI agent assistant integration associations per instance
         'name': 'Connect AI agent assistant integration associations per instance',
@@ -755,7 +755,7 @@ ENHANCED_CONNECT_QUOTA_METRICS = {
         'method': 'service_quotas',
         'service': 'connect',
         'default_limit': 1,
-        'context_required': True
+        'context_required': False
     },
     'L-2D7CA70C': {  # Connect AI agent knowledge base integration associations per instance
         'name': 'Connect AI agent knowledge base integration associations per instance',
@@ -764,7 +764,7 @@ ENHANCED_CONNECT_QUOTA_METRICS = {
         'method': 'service_quotas',
         'service': 'connect',
         'default_limit': 10,
-        'context_required': True
+        'context_required': False
     },
     'L-D55E707F': {  # Connect AI agent message templates integration associations per instance
         'name': 'Connect AI agent message templates integration associations per instance',
@@ -773,7 +773,7 @@ ENHANCED_CONNECT_QUOTA_METRICS = {
         'method': 'service_quotas',
         'service': 'connect',
         'default_limit': 1,
-        'context_required': True
+        'context_required': False
     },
     'L-C8F22860': {  # Connect AI agent quick responses integration associations per instance
         'name': 'Connect AI agent quick responses integration associations per instance',
@@ -782,7 +782,7 @@ ENHANCED_CONNECT_QUOTA_METRICS = {
         'method': 'service_quotas',
         'service': 'connect',
         'default_limit': 1,
-        'context_required': True
+        'context_required': False
     },
     'L-02421311': {  # File scanner integration associations per instance
         'name': 'File scanner integration associations per instance',
@@ -791,7 +791,7 @@ ENHANCED_CONNECT_QUOTA_METRICS = {
         'method': 'service_quotas',
         'service': 'connect',
         'default_limit': 1,
-        'context_required': True
+        'context_required': False
     },
     'L-6402A996': {  # Workspaces per instance
         'name': 'Workspaces per instance',
@@ -801,138 +801,12 @@ ENHANCED_CONNECT_QUOTA_METRICS = {
         'service': 'connect',
         'api': 'list_workspaces',
         'default_limit': 20,
-        'context_required': True
+        'context_required': False
     },
     
     # ===== AMAZON LEX SERVICE =====
-    'L-36FA8BD2': {  # Bots per account (Lex V2)
-        'name': 'Bots per account (Lex V2)',
-        'category': 'INTEGRATIONS',
-        'scope': 'ACCOUNT',
-        'method': 'service_quotas',
-        'service': 'lexv2-models',
-        'default_limit': 100,
-        'context_required': False
-    },
-    'L-ED50DA7C': {  # Sample utterances per intent (Lex V2)
-        'name': 'Sample utterances per intent (Lex V2)',
-        'category': 'INTEGRATIONS',
-        'scope': 'ACCOUNT',
-        'method': 'service_quotas',
-        'service': 'lexv2-models',
-        'default_limit': 1500,
-        'context_required': False
-    },
-    'L-77D6C60C': {  # Sample utterances per slot (Lex V2)
-        'name': 'Sample utterances per slot (Lex V2)',
-        'category': 'INTEGRATIONS',
-        'scope': 'ACCOUNT',
-        'method': 'service_quotas',
-        'service': 'lexv2-models',
-        'default_limit': 10000,
-        'context_required': False
-    },
     
     # ===== CUSTOMER PROFILES SERVICE =====
-    'L-6603B252': {  # Customer Profiles domain count
-        'name': 'Customer Profiles domains per account',
-        'category': 'CUSTOMER_PROFILES',
-        'scope': 'ACCOUNT',
-        'method': 'service_quotas',
-        'service': 'customer-profiles',
-        'default_limit': 100,
-        'context_required': False
-    },
-    'L-A7ED412C': {  # Keys per object type
-        'name': 'Keys per object type',
-        'category': 'CUSTOMER_PROFILES',
-        'scope': 'ACCOUNT',
-        'method': 'service_quotas',
-        'service': 'customer-profiles',
-        'default_limit': 10,
-        'context_required': False
-    },
-    'L-3217D1F1': {  # Maximum expiration in days
-        'name': 'Maximum expiration in days',
-        'category': 'CUSTOMER_PROFILES',
-        'scope': 'ACCOUNT',
-        'method': 'service_quotas',
-        'service': 'customer-profiles',
-        'default_limit': 1098,
-        'context_required': False
-    },
-    'L-0A1E1791': {  # Event triggers per domain
-        'name': 'Event triggers per domain',
-        'category': 'CUSTOMER_PROFILES',
-        'scope': 'ACCOUNT',
-        'method': 'service_quotas',
-        'service': 'customer-profiles',
-        'default_limit': 10,
-        'context_required': False
-    },
-    'L-4A5ECB8E': {  # Number of integrations
-        'name': 'Integrations per domain',
-        'category': 'CUSTOMER_PROFILES',
-        'scope': 'ACCOUNT',
-        'method': 'service_quotas',
-        'service': 'customer-profiles',
-        'default_limit': 50,
-        'context_required': False
-    },
-    'L-DFAEAED3': {  # Profile history records per profile
-        'name': 'Profile history records per profile',
-        'category': 'CUSTOMER_PROFILES',
-        'scope': 'ACCOUNT',
-        'method': 'service_quotas',
-        'service': 'customer-profiles',
-        'default_limit': 100,
-        'context_required': False
-    },
-    'L-B6E9F054': {  # Recommenders per domain
-        'name': 'Recommenders per domain',
-        'category': 'CUSTOMER_PROFILES',
-        'scope': 'ACCOUNT',
-        'method': 'service_quotas',
-        'service': 'customer-profiles',
-        'default_limit': 10,
-        'context_required': False
-    },
-    'L-B59352A0': {  # Segment snapshots per day
-        'name': 'Segment snapshots per day',
-        'category': 'CUSTOMER_PROFILES',
-        'scope': 'ACCOUNT',
-        'method': 'service_quotas',
-        'service': 'customer-profiles',
-        'default_limit': 5,
-        'context_required': False
-    },
-    'L-63975AF3': {  # Size of all objects for a profile
-        'name': 'Size of all objects for a profile (KB)',
-        'category': 'CUSTOMER_PROFILES',
-        'scope': 'ACCOUNT',
-        'method': 'service_quotas',
-        'service': 'customer-profiles',
-        'default_limit': 51200,
-        'context_required': False
-    },
-    'L-14092FF4': {  # Object types per domain
-        'name': 'Object types per domain',
-        'category': 'CUSTOMER_PROFILES',
-        'scope': 'ACCOUNT',
-        'method': 'service_quotas',
-        'service': 'customer-profiles',
-        'default_limit': 100,
-        'context_required': False
-    },
-    'L-E17DC7C3': {  # Objects per profile
-        'name': 'Objects per profile',
-        'category': 'CUSTOMER_PROFILES',
-        'scope': 'ACCOUNT',
-        'method': 'service_quotas',
-        'service': 'customer-profiles',
-        'default_limit': 1000,
-        'context_required': False
-    },
     
     # ===== API RATE LIMITS =====
     # Based on AWS Connect Service Limits documentation
@@ -1629,7 +1503,7 @@ class MultiServiceClientManager:
             'required': False,
             'retry_config': {'max_attempts': 3, 'mode': 'standard'}
         },
-        'connect-campaigns': {
+        'connectcampaigns': {
             'name': 'Amazon Connect Outbound Campaigns',
             'required': False,
             'retry_config': {'max_attempts': 3, 'mode': 'standard'}
@@ -3710,7 +3584,7 @@ class ConnectQuotaMonitor:
                 params['instanceId'] = instance_id
             elif service == 'wisdom':
                 params['instanceId'] = instance_id
-            elif service == 'connect-campaigns':
+            elif service == 'connectcampaigns':
                 params['instanceId'] = instance_id
         
         # Add service-specific parameters
@@ -3764,7 +3638,7 @@ class ConnectQuotaMonitor:
                 'list_knowledge_bases': 'knowledgeBaseSummaries',
                 'list_contents': 'contentSummaries'
             },
-            'connect-campaigns': {
+            'connectcampaigns': {
                 'list_campaigns': 'campaignSummaryList'
             }
         }

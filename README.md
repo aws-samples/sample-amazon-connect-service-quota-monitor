@@ -1,21 +1,30 @@
-# Amazon Connect Service Quota Monitor
+# Amazon Connect service quota monitor
 
-A comprehensive solution that monitors **287 Amazon Connect service quotas** across all Connect services with dynamic instance discovery, consolidated alerting, intelligent deployment capabilities, **pre-throttle utilization monitoring**, and **API throttling detection**.
+This solution monitors 326 Amazon Connect service quotas across all Connect services with dynamic instance discovery, consolidated alerting, intelligent deployment capabilities, pre-throttle utilization monitoring, and API throttling detection.
 
-## 🚀 Key Features
+## Key features
 
-- **Comprehensive Coverage**: Monitors 287 quotas (47 capacity quotas + 240 API rate limits)
-- **Pre-Throttle Utilization Alerts (Proactive Utilization Monitor)**: Detects APIs approaching rate limits BEFORE throttling occurs
-- **Peak-Hour Aware**: Uses 1-minute CloudWatch granularity to catch real per-second spikes, not hourly averages
-- **API Throttling Detection (Throttle Detection)**: Real-time monitoring of API rate limit violations
-- **Dynamic Discovery**: Automatically discovers Connect instances (no hardcoded IDs)
-- **Consolidated Alerts**: One email per instance with all violations
-- **Flexible Storage**: Supports S3, DynamoDB, or both
-- **Multi-Service Support**: Cases, Customer Profiles, Voice ID, Wisdom, and more
-- **Enterprise Security**: KMS encryption, VPC support, data sanitization
-- **Intelligent Deployment**: Automatic code size detection with S3 fallback
+**Coverage**: Monitors 326 quotas (110 capacity quotas and 216 API rate limits)
 
-## 📊 Monitored Services & Quotas
+**Pre-throttle utilization alerts**: Detects APIs approaching rate limits before throttling occurs
+
+**Peak-hour aware**: Uses 1-minute CloudWatch granularity to catch real per-second spikes, not hourly averages
+
+**API throttling detection**: Real-time monitoring of API rate limit violations
+
+**Dynamic discovery**: Automatically discovers Connect instances (no hardcoded IDs)
+
+**Consolidated alerts**: One email per instance with all violations
+
+**Storage options**: Supports S3, DynamoDB, or both
+
+**Multi-service support**: Cases, Customer Profiles, Voice ID, Wisdom, and more
+
+**Security**: KMS encryption, VPC support, data sanitization
+
+**Intelligent deployment**: Automatic code size detection with S3 fallback
+
+## Monitored services and quotas
 
 ### Core Amazon Connect (15+ quotas)
 - Users, Security profiles, Contact flows, Phone numbers
@@ -51,7 +60,7 @@ A comprehensive solution that monitors **287 Amazon Connect service quotas** acr
 - **Historical analysis** of throttling trends
 - **Automated alerts** when APIs are being throttled
 
-## 🏗️ Architecture
+## Architecture
 
 ```
 ┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
@@ -84,14 +93,14 @@ A comprehensive solution that monitors **287 Amazon Connect service quotas** acr
                 └──────────────────┘  └─────────────────┘
 ```
 
-## 📋 Prerequisites
+## Prerequisites
 
-- **AWS CLI** configured with appropriate permissions
-- **Amazon Connect instance(s)** in your AWS account
-- **Email address** for receiving alerts
-- **IAM permissions** for CloudFormation, Lambda, SNS, S3, DynamoDB, Connect
+- AWS CLI configured with appropriate permissions
+- Amazon Connect instance(s) in your AWS account
+- Email address for receiving alerts
+- IAM permissions for CloudFormation, Lambda, SNS, S3, DynamoDB, Connect
 
-## 🚀 Deployment
+## Deployment
 
 ### Step 1: Deploy Main Quota Monitor
 
@@ -247,7 +256,7 @@ aws lambda invoke \
   response.json
 ```
 
-## ⚙️ Configuration Parameters
+## Configuration parameters
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
@@ -260,7 +269,7 @@ aws lambda invoke \
 | `UseDynamoDBStorage` | true | Enable DynamoDB storage |
 | `ScheduleExpression` | rate(1 hour) | Monitoring frequency |
 
-## 📧 Alert Examples
+## Alert examples
 
 ### Quota Violation Alert
 ```
@@ -355,9 +364,33 @@ Recommended Actions:
 Time: 2026-03-19 19:42:00 UTC
 ```
 
-## 💾 Data Storage
+## HTML dashboard
 
-### DynamoDB Structure
+The solution includes a converter script to generate visual HTML dashboards from JSON quota reports.
+
+### Generate HTML report
+
+```bash
+# Auto-names output as .html
+python3 quota_report_to_html.py connect_quota_report_20260416_180741.json
+
+# Or specify output path
+python3 quota_report_to_html.py input.json my_report.html
+```
+
+### Dashboard features
+
+- KPI summary cards showing total quotas, violations, and highest utilization
+- Color-coded utilization bars (green, orange, red based on thresholds)
+- Organized by category (Core Connect, Contact Handling, Routing, Integrations, API Rate Limits)
+- Responsive design with Amazon Ember font styling
+- Violation badges for quick identification
+
+The dashboard provides an at-a-glance view of your Connect environment's quota health, making it easier to identify and address potential issues before they impact operations.
+
+## Data storage
+
+### DynamoDB structure
 ```json
 {
   "id": "instance_12345678_1640995200",
@@ -419,7 +452,7 @@ s3://bucket/
 }
 ```
 
-## 🔧 Post-Deployment Configuration
+## Post-deployment configuration
 
 ### Update Alert Threshold
 ```bash
@@ -441,9 +474,9 @@ aws sns subscribe \
   --notification-endpoint admin2@company.com
 ```
 
-## 🔍 Monitoring & Troubleshooting
+## Monitoring and troubleshooting
 
-### Check Execution Logs
+### Check execution logs
 
 **Quota Monitor:**
 ```bash
@@ -497,9 +530,9 @@ aws logs tail /aws/lambda/ConnectAPIThrottlingMonitor --since 1h
 - Check Lambda has ALERT_SNS_TOPIC_ARN environment variable
 - Verify throttling is actually occurring
 
-## 💰 Cost Estimation
+## Cost estimation
 
-**Monthly Costs (typical):**
+Monthly costs (typical):
 - **Lambda (Quota Monitor)**: ~$2-5 (hourly execution)
 - **Lambda (Throttling Monitor)**: ~$0.15 (hourly execution)
 - **DynamoDB**: ~$1-3 (quota data storage)
@@ -509,16 +542,16 @@ aws logs tail /aws/lambda/ConnectAPIThrottlingMonitor --since 1h
 
 **Total: ~$4-11/month** for comprehensive Connect monitoring
 
-## 🔒 Security Features
+## Security features
 
-- ✅ **KMS Encryption**: SNS topics, DynamoDB tables, Lambda environment
-- ✅ **Data Sanitization**: Removes sensitive data from logs
-- ✅ **IAM Least Privilege**: Minimal required permissions
-- ✅ **VPC Support**: Optional VPC deployment
-- ✅ **Dead Letter Queue**: Failed execution handling
-- ✅ **Reserved Concurrency**: Prevents excessive executions
+- KMS encryption for SNS topics, DynamoDB tables, and Lambda environment
+- Data sanitization removes sensitive data from logs
+- IAM least privilege with minimal required permissions
+- VPC support for optional VPC deployment
+- Dead letter queue for failed execution handling
+- Reserved concurrency prevents excessive executions
 
-## 📈 Performance
+## Performance
 
 ### Quota Monitor
 - **Execution Time**: 60-120 seconds (depending on instance count)
@@ -535,9 +568,9 @@ aws logs tail /aws/lambda/ConnectAPIThrottlingMonitor --since 1h
 - **Throttle Detection Coverage**: 40+ API operations monitored for throttling
 - **Execution Cost**: < $0.50/month
 
-## 🎯 Success Validation
+## Success validation
 
-**✅ Deployment is successful when:**
+Deployment is successful when:
 1. CloudFormation stack creates without errors
 2. Lambda functions execute successfully
 3. Email alerts are received for violations
@@ -546,9 +579,9 @@ aws logs tail /aws/lambda/ConnectAPIThrottlingMonitor --since 1h
 6. All Connect instances are discovered
 7. Throttling monitor detects API usage patterns
 
-## 📊 Coverage Analysis
+## Coverage analysis
 
-### ✅ Well Covered Categories
+### Well covered categories
 
 1. **Core Amazon Connect** - Excellent coverage (15+ quotas)
 2. **Contact Handling & Metrics** - Good coverage (10+ quotas)
@@ -557,7 +590,7 @@ aws logs tail /aws/lambda/ConnectAPIThrottlingMonitor --since 1h
 5. **Related Services** - Good coverage (Customer Profiles, Cases, Voice ID, Wisdom)
 6. **API Throttling** - Real-time monitoring via CloudWatch
 
-### ⚠️ Areas for Enhancement
+### Areas for enhancement
 
 1. **Contact Lens** - Minimal coverage (4 entries)
    - Missing: post-call analytics jobs, chat analytics jobs, summary jobs
@@ -566,7 +599,7 @@ aws logs tail /aws/lambda/ConnectAPIThrottlingMonitor --since 1h
    - Has task templates and fields
    - Missing: concurrent task limits monitoring
 
-3. **Forecasting & Capacity** - Limited (4 quota entries)
+3. **Forecasting and Capacity** - Limited (4 quota entries)
    - Missing: actual usage monitoring
 
 4. **Email Capabilities** - Recently added (2024-2026)
@@ -591,9 +624,9 @@ aws logs tail /aws/lambda/ConnectAPIThrottlingMonitor --since 1h
 - Utilization Monitor prevents throttling before it impacts callers (proactive)
 - Throttle Detection catches throttling that slipped through (reactive)
 
-## 📞 Support
+## Support
 
-**For issues:**
+For issues:
 1. Check CloudWatch logs first
 2. Verify IAM permissions
 3. Confirm Connect instances are active
@@ -614,9 +647,9 @@ aws lambda invoke --function-name ConnectAPIThrottlingMonitor test2.json
 aws dynamodb scan --table-name ConnectQuotaMonitor --max-items 3
 ```
 
-## 🗑️ Uninstall
+## Uninstall
 
-### Remove Throttling Monitor
+### Remove throttling monitor
 ```bash
 # Delete Lambda function
 aws lambda delete-function --function-name ConnectAPIThrottlingMonitor
@@ -640,11 +673,11 @@ aws cloudformation wait stack-delete-complete --stack-name ConnectQuotaMonitor
 
 ---
 
-## 🎉 Ready to Deploy!
+## Quick start
 
-This enhanced Connect Quota Monitor provides enterprise-grade monitoring for your Amazon Connect environment with both capacity quota tracking and API throttling detection. Follow the deployment steps above to get started with comprehensive quota monitoring in minutes!
+This enhanced Connect Quota Monitor provides monitoring for your Amazon Connect environment with capacity quota tracking and API throttling detection. Follow the deployment steps above to get started with comprehensive quota monitoring.
 
-**Quick Start:**
+Quick start commands:
 ```bash
 # 1. Deploy main quota monitor (email is required)
 ./deploy.sh --email admin@company.com
@@ -659,6 +692,6 @@ This enhanced Connect Quota Monitor provides enterprise-grade monitoring for you
 
 ---
 
-## 📄 License
+## License
 
 This library is licensed under the MIT-0 License. See the LICENSE file.

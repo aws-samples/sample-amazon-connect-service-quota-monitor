@@ -285,8 +285,10 @@ ENHANCED_CONNECT_QUOTA_METRICS = {
         'method': 'cloudwatch',
         'service': 'connect',
         'metric_name': 'ConcurrentCalls',
+        'metric_name_fallback': 'ConcurrentHighVolumeCallsPercentage',
         'namespace': 'AWS/Connect',
         'statistic': 'Maximum',
+        'metric_group': 'VoiceCalls',
         'default_limit': 10,
         'context_required': False
     },
@@ -299,6 +301,7 @@ ENHANCED_CONNECT_QUOTA_METRICS = {
         'metric_name': 'ConcurrentActiveChats',
         'namespace': 'AWS/Connect',
         'statistic': 'Maximum',
+        'metric_group': 'Chats',
         'default_limit': 100,
         'context_required': False
     },
@@ -311,6 +314,7 @@ ENHANCED_CONNECT_QUOTA_METRICS = {
         'metric_name': 'ConcurrentActiveTasks',
         'namespace': 'AWS/Connect',
         'statistic': 'Maximum',
+        'metric_group': 'Tasks',
         'default_limit': 2500,
         'context_required': False
     },
@@ -3332,6 +3336,7 @@ class ConnectQuotaMonitor:
         metric_name = metric_config.get('metric_name')
         namespace = metric_config.get('namespace', 'AWS/Connect')
         statistic = metric_config.get('statistic', 'Maximum')
+        metric_group = metric_config.get('metric_group')
         
         if not metric_name:
             logger.error("No metric_name specified for cloudwatch method")
@@ -3343,6 +3348,13 @@ class ConnectQuotaMonitor:
             dimensions.append({
                 'Name': 'InstanceId',
                 'Value': instance_id
+            })
+        
+        # Add MetricGroup dimension if specified (required for concurrent metrics)
+        if metric_group:
+            dimensions.append({
+                'Name': 'MetricGroup',
+                'Value': metric_group
             })
         
         # Get metric data from CloudWatch
@@ -3361,6 +3373,38 @@ class ConnectQuotaMonitor:
                 Period=300,  # 5 minutes
                 Statistics=[statistic]
             )
+            
+            # If no data with primary metric name, try fallback
+            if (not response or not response.get('Datapoints')) and metric_config.get('metric_name_fallback'):
+                fallback_name = metric_config['metric_name_fallback']
+                logger.info(f"No data for {metric_name}, trying fallback: {fallback_name}")
+                response = self.call_service_api(
+                    'cloudwatch',
+                    'get_metric_statistics',
+                    Namespace=namespace,
+                    MetricName=fallback_name,
+                    Dimensions=dimensions,
+                    StartTime=start_time,
+                    EndTime=end_time,
+                    Period=300,
+                    Statistics=[statistic]
+                )
+            
+            # If still no data, try without MetricGroup dimension (backward compat)
+            if (not response or not response.get('Datapoints')) and metric_group:
+                logger.info(f"No data for {metric_name} with MetricGroup={metric_group}, trying without MetricGroup dimension")
+                dimensions_no_group = [d for d in dimensions if d['Name'] != 'MetricGroup']
+                response = self.call_service_api(
+                    'cloudwatch',
+                    'get_metric_statistics',
+                    Namespace=namespace,
+                    MetricName=metric_name,
+                    Dimensions=dimensions_no_group,
+                    StartTime=start_time,
+                    EndTime=end_time,
+                    Period=300,
+                    Statistics=[statistic]
+                )
             
             if not response or not response.get('Datapoints'):
                 logger.debug(f"No CloudWatch data for metric {metric_name}")

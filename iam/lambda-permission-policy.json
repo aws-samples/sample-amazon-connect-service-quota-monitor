@@ -1,0 +1,42 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "ConnectAndQuotas",
+      "Effect": "Allow",
+      "Action": [
+        "connect:List*",
+        "connect:Describe*",
+        "connect:Get*",
+        "servicequotas:ListServiceQuotas",
+        "servicequotas:GetServiceQuota",
+        "cloudwatch:GetMetricData",
+        "cloudwatch:GetMetricStatistics"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "S3ReportBucket",
+      "Effect": "Allow",
+      "Action": [
+        "s3:PutObject",
+        "s3:GetObject",
+        "s3:ListBucket"
+      ],
+      "Resource": [
+        "arn:aws:s3:::YOUR_BUCKET",
+        "arn:aws:s3:::YOUR_BUCKET/*"
+      ]
+    },
+    {
+      "Sid": "CloudWatchLogs",
+      "Effect": "Allow",
+      "Action": [
+        "logs:CreateLogGroup",
+        "logs:CreateLogStream",
+        "logs:PutLogEvents"
+      ],
+      "Resource": "arn:aws:logs:*:YOUR_ACCOUNT_ID:*"
+    }
+  ]
+}

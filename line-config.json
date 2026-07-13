@@ -1,0 +1,48 @@
+{
+  "_comment": "Map your Connect phone numbers and flows to business lines for the operations dashboard.",
+  "_instructions": "Each line needs: id (slug), name (display), number (primary TFN for display). Match flows using flow_patterns (glob), number_prefixes, or tags (key:value pairs from your Connect resource tags).",
+  "lines": [
+    {
+      "id": "claims",
+      "name": "Claims",
+      "number": "1-800-CLAIMS",
+      "match": {
+        "flow_patterns": ["Claims*", "*Total Loss*", "*Monarch*", "*FNOL*"],
+        "number_prefixes": ["+1800"],
+        "tags": {"BusinessLine": "Claims"}
+      }
+    },
+    {
+      "id": "sales",
+      "name": "Sales",
+      "number": "1-800-SALES",
+      "match": {
+        "flow_patterns": ["Sales*", "*Warmup*", "*Quote*"],
+        "number_prefixes": [],
+        "tags": {"BusinessLine": "Sales"}
+      }
+    },
+    {
+      "id": "service",
+      "name": "Service & Billing",
+      "number": "1-800-SERVICE",
+      "match": {
+        "flow_patterns": ["Service*", "*Billing*", "*EBIP*", "*Self-Service*"],
+        "number_prefixes": [],
+        "tags": {"BusinessLine": "Service"}
+      }
+    }
+  ],
+  "auto_discover": {
+    "_comment": "If enabled, the script will read tags from your Connect resources and auto-generate lines. Set enabled:true and specify which tag key defines your business lines.",
+    "enabled": false,
+    "tag_key": "BusinessLine",
+    "fallback_line_name": "Other"
+  },
+  "defaults": {
+    "business_day_hours": 8,
+    "contacts_per_number_per_day": 15,
+    "apis_per_contact": 18,
+    "growth_projection_pct": 25
+  }
+}

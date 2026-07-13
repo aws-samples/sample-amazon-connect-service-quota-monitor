@@ -1,0 +1,138 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  Connect Operations Dashboard — Live Metrics API.
+  Deploys a Lambda function behind API Gateway that serves real-time
+  CloudWatch metrics to the Connect Operations Dashboard.
+
+Parameters:
+  ConnectInstanceId:
+    Type: String
+    Description: Amazon Connect Instance ID
+    AllowedPattern: '[a-f0-9-]+'
+
+  LineConfigJson:
+    Type: String
+    Description: Inline JSON line configuration (for small configs)
+    Default: ''
+
+  LineConfigS3Bucket:
+    Type: String
+    Description: S3 bucket containing line-config.json (alternative to inline)
+    Default: ''
+
+  LineConfigS3Key:
+    Type: String
+    Description: S3 key for line-config.json
+    Default: 'line-config.json'
+
+  ReportBucket:
+    Type: String
+    Description: S3 bucket for dashboard reports, archives, and peak files
+    Default: ''
+
+  ScheduleRate:
+    Type: String
+    Description: How frequently the metrics Lambda runs (e.g., rate(1 hour), rate(15 minutes))
+    Default: 'rate(1 hour)'
+
+Globals:
+  Function:
+    Timeout: 30
+    Runtime: python3.12
+    MemorySize: 256
+    Architectures:
+      - arm64
+
+Resources:
+
+  MetricsFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: lambda_function.lambda_handler
+      CodeUri: .
+      Description: Serves live CloudWatch metrics for Connect Operations Dashboard
+      Environment:
+        Variables:
+          CONNECT_INSTANCE_ID: !Ref ConnectInstanceId
+          LINE_CONFIG_JSON: !Ref LineConfigJson
+          LINE_CONFIG_S3_BUCKET: !Ref LineConfigS3Bucket
+          LINE_CONFIG_S3_KEY: !Ref LineConfigS3Key
+          S3_REPORT_BUCKET: !Ref ReportBucket
+          API_ENDPOINT: !Sub 'https://${DashboardApi}.execute-api.${AWS::Region}.amazonaws.com/prod/quota'
+      Policies:
+        - Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action:
+                - cloudwatch:GetMetricData
+                - cloudwatch:GetMetricStatistics
+              Resource: '*'
+            - Effect: Allow
+              Action:
+                - servicequotas:ListServiceQuotas
+                - servicequotas:GetServiceQuota
+              Resource: '*'
+            - !If
+              - HasS3Config
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                Resource: !Sub 'arn:aws:s3:::${LineConfigS3Bucket}/${LineConfigS3Key}'
+              - !Ref AWS::NoValue
+            - !If
+              - HasReportBucket
+              - Effect: Allow
+                Action:
+                  - s3:PutObject
+                  - s3:GetObject
+                Resource: !Sub 'arn:aws:s3:::${ReportBucket}/*'
+              - !Ref AWS::NoValue
+      Events:
+        GetMetrics:
+          Type: Api
+          Properties:
+            Path: /metrics
+            Method: get
+            RestApiId: !Ref DashboardApi
+        OptionsMetrics:
+          Type: Api
+          Properties:
+            Path: /metrics
+            Method: options
+            RestApiId: !Ref DashboardApi
+        ScheduledRefresh:
+          Type: Schedule
+          Properties:
+            Schedule: !Ref ScheduleRate
+            Description: Periodic metrics collection, archive write, and peak tracking
+
+  DashboardApi:
+    Type: AWS::Serverless::Api
+    Properties:
+      StageName: prod
+      Cors:
+        AllowMethods: "'GET, OPTIONS'"
+        AllowHeaders: "'Content-Type'"
+        AllowOrigin: "'*'"
+
+Conditions:
+  HasS3Config: !Not [!Equals [!Ref LineConfigS3Bucket, '']]
+  HasReportBucket: !Not [!Equals [!Ref ReportBucket, '']]
+
+Outputs:
+  DashboardURL:
+    Description: Bookmark this URL — your dashboard is always here
+    Value: !Sub 'http://${ReportBucket}.s3-website-${AWS::Region}.amazonaws.com/'
+
+  ApiEndpoint:
+    Description: History API (used by the dashboard for 7-day trend)
+    Value: !Sub 'https://${DashboardApi}.execute-api.${AWS::Region}.amazonaws.com/prod/quota'
+
+  FunctionArn:
+    Description: Lambda function ARN
+    Value: !GetAtt MetricsFunction.Arn
+
+  EnableWebsiteHosting:
+    Description: Run this once to enable S3 static website hosting
+    Value: !Sub 'aws s3 website s3://${ReportBucket}/ --index-document index.html'

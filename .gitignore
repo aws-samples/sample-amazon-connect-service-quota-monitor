@@ -73,3 +73,6 @@ CONNECT_BEST_PRACTICES.md
 
 # Logs
 *.log
+test-v1/
+test-output/
+v1-test/

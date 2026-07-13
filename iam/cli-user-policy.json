@@ -1,0 +1,51 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "ConnectReadOnly",
+      "Effect": "Allow",
+      "Action": [
+        "connect:ListContactFlows",
+        "connect:DescribeContactFlow",
+        "connect:ListPhoneNumbersV2",
+        "connect:ListQueues",
+        "connect:ListRoutingProfiles",
+        "connect:ListLambdaFunctions",
+        "connect:ListTrafficDistributionGroups",
+        "connect:DescribeTrafficDistributionGroup",
+        "connect:GetTrafficDistribution"
+      ],
+      "Resource": "arn:aws:connect:*:YOUR_ACCOUNT_ID:instance/YOUR_INSTANCE_ID*"
+    },
+    {
+      "Sid": "LambdaReadOnly",
+      "Effect": "Allow",
+      "Action": [
+        "lambda:ListFunctions",
+        "lambda:GetFunction",
+        "lambda:ListProvisionedConcurrencyConfigs"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "LexReadOnly",
+      "Effect": "Allow",
+      "Action": [
+        "lexv2:ListBots",
+        "lexv2:ListBotAliases"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "QuotasAndMetrics",
+      "Effect": "Allow",
+      "Action": [
+        "servicequotas:ListServiceQuotas",
+        "servicequotas:GetServiceQuota",
+        "cloudwatch:GetMetricData",
+        "cloudwatch:GetMetricStatistics"
+      ],
+      "Resource": "*"
+    }
+  ]
+}

@@ -1,152 +1,164 @@
-# Amazon Connect Quota Monitor and Operations Dashboard
+# Amazon Connect Service Quota Monitor
 
-**Know which API quota will breach before your next migration wave — not after phones go silent.**
+**Get an email alert before your Connect quotas breach — not after calls start dropping.**
 
----
-
-## The problem
-
-Amazon Connect enforces rate limits on every API your contact flows call. When you add agents, migrate phone numbers, or launch campaigns, those limits get closer. There's no built-in way to see how close you are, or predict when you'll hit them.
-
-Teams discover throttling after calls start dropping. Quota increases take 3-5 business days. The migration was yesterday.
-
-## What this gives you
-
-Run one command. Get a dashboard that shows:
-
-- How your phone numbers, contact flows, and Lambdas connect to API quotas
-- How much headroom you have before hitting limits
-- What happens when you add your next batch of agents (migration wave planner)
-- Which hour of the day is your peak, and whether it's growing
-
-The dashboard is a self-contained HTML file. No server. Opens offline in any browser. Share it with your team as an email attachment.
+> **See what the dashboard looks like:** Open [docs/screenshots/sample-dashboard.html](docs/screenshots/sample-dashboard.html) in your browser for a live interactive preview with sample data.
 
 ---
 
-## Get started (3 commands)
+## What this does
+
+Monitors 70+ Amazon Connect service quotas continuously. When any quota exceeds 80% utilization, you get a consolidated email alert with:
+
+- Which quotas are approaching their limits
+- Current utilization percentage
+- Which Connect instance is affected
+- Recommended actions
+
+One CloudFormation deploy. No code to write. Alerts start flowing within minutes.
+
+---
+
+## Quick start — Deploy the monitor (2 minutes)
+
+> **Detailed step-by-step guide:** [docs/GETTING_STARTED.md](docs/GETTING_STARTED.md)
+
+### Prerequisites
+
+- AWS account with an Amazon Connect instance
+- An email address to receive alerts
+- AWS CLI configured ([setup guide](docs/GETTING_STARTED.md#install-aws-cli-and-configure-credentials))
+
+### Deploy
 
 ```bash
-pip install boto3
+git clone https://github.com/aws-samples/sample-amazon-connect-service-quota-monitor.git
+cd sample-amazon-connect-service-quota-monitor
 
-python connect-resource-mapper.py \
+aws cloudformation deploy \
+  --template-file connect-quota-monitor-cfn.yaml \
+  --stack-name connect-quota-monitor \
+  --parameter-overrides \
+    NotificationEmail=your-team@company.com \
+    ThresholdPercentage=80 \
+  --capabilities CAPABILITY_IAM \
+  --region us-east-1
+```
+
+**Windows (PowerShell):**
+```powershell
+aws cloudformation deploy `
+  --template-file connect-quota-monitor-cfn.yaml `
+  --stack-name connect-quota-monitor `
+  --parameter-overrides `
+    NotificationEmail=your-team@company.com `
+    ThresholdPercentage=80 `
+  --capabilities CAPABILITY_IAM `
+  --region us-east-1
+```
+
+### Confirm your email
+
+After deploying, **check your inbox** for an SNS subscription confirmation email. Click "Confirm subscription" — alerts won't be delivered until you confirm.
+
+### What happens next
+
+- A Lambda runs every hour (configurable) and checks all Connect quotas
+- If any quota exceeds 80% utilization → you get one consolidated email per instance
+- The email lists all breaching quotas with current values and limits
+
+---
+
+## Configuration options
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `NotificationEmail` | *(required)* | Email address for quota breach alerts |
+| `ThresholdPercentage` | `80` | Alert when quotas exceed this % (0-100) |
+| `ScheduleExpression` | `rate(1 hour)` | How often to check (cron or rate) |
+| `LambdaTimeout` | `300` | Lambda timeout in seconds |
+| `LambdaMemory` | `256` | Lambda memory in MB |
+| `UseS3Storage` | `true` | Store historical data in S3 |
+| `UseDynamoDBStorage` | `false` | Store data in DynamoDB (optional) |
+
+### Change the threshold or schedule after deployment
+
+```bash
+aws cloudformation update-stack \
+  --stack-name connect-quota-monitor \
+  --use-previous-template \
+  --parameter-overrides \
+    NotificationEmail=your-team@company.com \
+    ThresholdPercentage=70 \
+    ScheduleExpression="rate(30 minutes)" \
+  --capabilities CAPABILITY_IAM \
+  --region us-east-1
+```
+
+---
+
+## Optional: Generate an on-demand dashboard
+
+Beyond the automated alerts, you can run a one-time scan to get an interactive HTML dashboard showing your full Connect topology and quota utilization:
+
+```bash
+python3 -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+
+python3 connect-resource-mapper.py \
   --instance-id YOUR_INSTANCE_ID \
   --region us-east-1 \
   --output-dir ./output
 
-open ./output/connect-api-report.html
+open ./output/connect-dashboard.html
 ```
 
-That's it. You'll see your full topology mapped and quota utilization in under 5 minutes.
+This generates a self-contained HTML file (no server needed) with:
+- Capacity meters for every quota
+- Resource topology (phone numbers → flows → Lambdas → quotas)
+- Migration wave planner
+- Peak hour trends
 
-**Prerequisites:**
-- Python 3.9+
-- AWS credentials with read-only Connect access ([IAM setup guide](iam/README.md))
-- Your Connect Instance ID (find it in your Connect console URL)
+> **Full setup guide:** [docs/GETTING_STARTED.md](docs/GETTING_STARTED.md)
 
 ---
 
-## What you get
+## What's in the box
 
-| Output file | Who it's for | What it shows |
-|-------------|-------------|---------------|
-| `connect-api-report.html` | Operations, engineering | APIs per flow, quota utilization, Lambda inventory, sortable tables |
-| `connect-resource-map.json` | Automation | Full topology graph (machine-readable) |
-| `connect-quota-impact-model.json` | Planning | Predictive model for migration capacity |
-
----
-
-## Want it to run automatically?
-
-Deploy the included Lambda. It runs every hour (configurable), generates a fresh HTML dashboard, and uploads it to S3. You get a permanent URL that always shows the latest data.
-
-```bash
-cd live-refresh/
-sam build
-sam deploy --guided
-```
-
-After deployment, the output shows your dashboard URL:
-
-```
-http://YOUR_BUCKET.s3-website-us-east-1.amazonaws.com/
-```
-
-Bookmark it. Every hour the Lambda:
-1. Collects current quota utilization from CloudWatch
-2. Generates a fresh HTML dashboard
-3. Uploads it to S3 (same URL, new data)
-4. Saves an archive copy for historical comparison
-5. Updates the daily peak file
-
-The dashboard includes a **7-day trend table** that shows peak utilization for each day, so you can see whether you're growing toward a limit.
-
-Details: [Live Refresh setup guide](live-refresh/README.md)
-
----
-
-## Learn more
-
-| Topic | Guide |
-|-------|-------|
-| IAM permissions and role setup | [`iam/README.md`](iam/README.md) |
-| Lambda deployment and scheduling | [`live-refresh/README.md`](live-refresh/README.md) |
-| Secure hosting (CloudFront + corporate SSO) | [`cloudfront-auth/README.md`](cloudfront-auth/README.md) |
-| Archives, history, peak tracking | [`docs/operations-guide.md`](docs/operations-guide.md) |
-| Configuring business lines | [Business line config](#configuring-business-lines) |
-| Architecture and data flow | [Architecture](#architecture) |
-| Troubleshooting | [Common issues](#common-issues) |
-
----
-
-## Configuring business lines
-
-The operations dashboard groups your traffic by business line (Claims, Sales, Service, etc.). Edit `line-config.json`:
-
-```json
-{
-  "lines": [
-    {
-      "id": "claims",
-      "name": "Claims",
-      "tdg_ids": ["8639a7cc-..."],
-      "agent_count": 3000
-    },
-    {
-      "id": "sales",
-      "name": "Sales",
-      "tdg_ids": ["9e209bb8-..."],
-      "agent_count": 1400
-    }
-  ]
-}
-```
-
-If you skip this file, the dashboard shows all traffic as a single view. You can always add it later.
+| Component | Description | Guide |
+|-----------|-------------|-------|
+| **Quota Monitor** (Lambda + CFN) | Automated alerts when quotas exceed threshold | You're here |
+| **Resource Mapper** (CLI) | On-demand scan → interactive HTML dashboard | [Above](#optional-generate-an-on-demand-dashboard) |
+| **Live Refresh** (Lambda) | Hourly dashboard refresh, S3 hosting | [live-refresh/README.md](live-refresh/README.md) |
 
 ---
 
 ## Architecture
 
 ```
-You run this:
-  python connect-resource-mapper.py --instance-id ... --output-dir ./output
-
-It scans (read-only):
-  Phone Numbers → Traffic Distribution Groups → Contact Flows → Lambdas → API Quotas
-
-It generates:
-  connect-api-report.html            (interactive, open in browser)
+CloudFormation deploys:
+  EventBridge (hourly) → Lambda → ServiceQuotas + CloudWatch + Connect APIs
+                            │
+                            ├→ Quota > 80%? → SNS → Email alert
+                            ├→ S3: quota-history/ (historical data)
+                            └→ CloudWatch Metrics (custom namespace)
 ```
 
-For ongoing monitoring, the Lambda does the same thing on a schedule and writes to S3:
+For the on-demand dashboard:
+```
+python3 connect-resource-mapper.py → Phone Numbers → Flows → Lambdas → Quotas
+                                       └→ connect-dashboard.html (open in browser)
+```
 
-```
-EventBridge (hourly) → Lambda → CloudWatch + ServiceQuotas
-                          │
-                          ├→ S3: latest.json (always current)
-                          ├→ S3: archive/YYYY-MM-DD/HH-MM.json (each run)
-                          └→ S3: peaks/YYYY-MM-DD.json (daily peak)
-```
+---
+
+## Documentation
+
+| Topic | Link |
+|-------|------|
+| Full getting started (all platforms) | [docs/GETTING_STARTED.md](docs/GETTING_STARTED.md) |
+| IAM permissions required | [iam/README.md](iam/README.md) |
+| Operations guide (archives, peaks) | [docs/operations-guide.md](docs/operations-guide.md) |
 
 ---
 
@@ -154,10 +166,20 @@ EventBridge (hourly) → Lambda → CloudWatch + ServiceQuotas
 
 | Symptom | Fix |
 |---------|-----|
+| No alert emails received | Check your inbox for the SNS confirmation email — click "Confirm subscription" |
 | All quotas show 0% | Run during business hours when calls are active |
-| "Access Denied" errors | Check your IAM policy — see [`iam/README.md`](iam/README.md) |
-| Scan takes > 5 minutes | Normal for large instances (50K+ numbers) |
-| Dashboard shows "No data" | Check output directory exists and re-run |
+| "Access Denied" | Check IAM permissions — [iam/README.md](iam/README.md) |
+| Alert threshold too noisy | Increase `ThresholdPercentage` to 90 |
+
+---
+
+## Cleanup
+
+To remove the monitor and stop alerts:
+
+```bash
+aws cloudformation delete-stack --stack-name connect-quota-monitor --region us-east-1
+```
 
 ---
 

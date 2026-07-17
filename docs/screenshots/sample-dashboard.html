@@ -1,0 +1,755 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Connect Operations Dashboard</title>
+<style>
+:root {
+  --bg: #0d1117; --panel: #161b22; --border: #30363d; --text: #c9d1d9;
+  --muted: #8b949e; --blue: #58a6ff; --green: #3fb950; --yellow: #d29922;
+  --red: #f85149; --purple: #bc8cff; --orange: #db6d28; --cyan: #39c5cf;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: var(--bg); color: var(--text); font-size: 13px; overflow-x: hidden; }
+
+/* ─── HEADER ─── */
+.header { background: var(--panel); border-bottom: 1px solid var(--border); padding: 10px 20px; display: flex; justify-content: space-between; align-items: center; }
+.header h1 { font-size: 15px; font-weight: 600; }
+.header .time-toggle { display: flex; gap: 2px; background: var(--bg); border-radius: 6px; padding: 2px; }
+.header .time-btn { padding: 5px 12px; font-size: 11px; border-radius: 4px; cursor: pointer; color: var(--muted); border: none; background: none; }
+.header .time-btn.active { background: var(--blue); color: #fff; }
+.header .time-btn:hover:not(.active) { color: var(--text); }
+
+/* ─── HEALTH STRIP ─── */
+.health-strip { display: flex; gap: 12px; padding: 12px 20px; border-bottom: 1px solid var(--border); overflow-x: auto; }
+.health-pill { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 10px 14px; min-width: 140px; cursor: pointer; transition: all 0.15s; flex-shrink: 0; }
+.health-pill:hover { border-color: var(--blue); transform: translateY(-1px); }
+.health-pill.selected { border-color: var(--blue); background: #111820; }
+.health-pill .pill-status { width: 8px; height: 8px; border-radius: 50%; display: inline-block; margin-right: 6px; }
+.health-pill .pill-status.green { background: var(--green); box-shadow: 0 0 6px var(--green); }
+.health-pill .pill-status.yellow { background: var(--yellow); box-shadow: 0 0 6px var(--yellow); }
+.health-pill .pill-status.red { background: var(--red); box-shadow: 0 0 6px var(--red); }
+.health-pill .pill-name { font-size: 12px; font-weight: 600; }
+.health-pill .pill-vol { font-size: 18px; font-weight: 700; color: var(--blue); margin: 4px 0; }
+.health-pill .pill-meta { font-size: 10px; color: var(--muted); }
+.health-pill .pill-capacity { margin-top: 6px; height: 4px; background: #21262d; border-radius: 2px; overflow: hidden; }
+.health-pill .pill-capacity .fill { height: 100%; border-radius: 2px; transition: width 0.5s; }
+
+/* ─── MAIN CONTENT ─── */
+.main { display: flex; height: calc(100vh - 110px); }
+.content { flex: 1; padding: 16px 20px; overflow-y: auto; }
+.detail-panel { width: 340px; background: var(--panel); border-left: 1px solid var(--border); overflow-y: auto; padding: 14px; transition: width 0.2s; }
+.detail-panel.hidden { width: 0; padding: 0; overflow: hidden; }
+
+/* ─── VOLUME CHART ─── */
+.chart-section { margin-bottom: 20px; }
+.chart-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+.chart-header h2 { font-size: 13px; font-weight: 600; }
+.chart-header .trend { font-size: 11px; }
+.chart-header .trend.up { color: var(--green); }
+.chart-header .trend.down { color: var(--red); }
+
+.hour-chart { display: flex; align-items: flex-end; gap: 2px; height: 120px; background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 12px; }
+.hour-bar { flex: 1; border-radius: 2px 2px 0 0; min-width: 8px; transition: height 0.3s; cursor: pointer; position: relative; }
+.hour-bar:hover { opacity: 0.8; }
+.hour-bar .bar-tip { display: none; position: absolute; bottom: 100%; left: 50%; transform: translateX(-50%); background: var(--bg); border: 1px solid var(--border); padding: 3px 6px; border-radius: 3px; font-size: 9px; white-space: nowrap; z-index: 10; }
+.hour-bar:hover .bar-tip { display: block; }
+.chart-labels { display: flex; gap: 2px; padding: 4px 12px 0; }
+.chart-labels span { flex: 1; text-align: center; font-size: 8px; color: var(--muted); }
+
+/* ─── CAPACITY METERS ─── */
+.capacity-section { margin-bottom: 20px; }
+.capacity-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 10px; }
+.capacity-card { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 12px; cursor: pointer; transition: border-color 0.15s; }
+.capacity-card:hover { border-color: var(--blue); }
+.capacity-card .cap-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+.capacity-card .cap-name { font-size: 11px; font-weight: 500; }
+.capacity-card .cap-pct { font-size: 14px; font-weight: 700; }
+.capacity-card .cap-bar { height: 6px; background: #21262d; border-radius: 3px; overflow: hidden; }
+.capacity-card .cap-bar .fill { height: 100%; border-radius: 3px; transition: width 0.5s; }
+.capacity-card .cap-detail { display: flex; justify-content: space-between; margin-top: 6px; font-size: 10px; color: var(--muted); }
+.capacity-card .cap-remaining { font-size: 10px; color: var(--muted); margin-top: 4px; }
+.capacity-card .cap-remaining strong { color: var(--text); }
+
+/* ─── DRILL-DOWN (reuse existing cascade) ─── */
+.drill-section { margin-top: 16px; border-top: 1px solid var(--border); padding-top: 16px; }
+.drill-section h3 { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 10px; }
+.drill-item { padding: 8px 10px; border-radius: 4px; cursor: pointer; margin: 2px 0; border: 1px solid transparent; display: flex; justify-content: space-between; align-items: center; }
+.drill-item:hover { background: #21262d; }
+.drill-item.selected { background: #1c2735; border-color: var(--blue); }
+.drill-item .d-name { font-size: 11px; }
+.drill-item .d-vol { font-size: 11px; color: var(--blue); font-weight: 500; }
+.drill-item .d-bar { width: 60px; height: 3px; background: #21262d; border-radius: 2px; margin: 0 8px; overflow: hidden; }
+.drill-item .d-bar .fill { height: 100%; border-radius: 2px; }
+
+/* ─── DETAIL PANEL ─── */
+.detail-card { background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 10px; margin: 8px 0; }
+.detail-card h4 { font-size: 10px; color: var(--purple); text-transform: uppercase; letter-spacing: 0.3px; margin-bottom: 6px; }
+.detail-row { display: flex; justify-content: space-between; padding: 3px 0; font-size: 11px; }
+.detail-row .label { color: var(--muted); }
+.detail-row .value { font-weight: 500; }
+
+/* ─── WAVE PLANNER ─── */
+.planner-section { margin-top: 16px; }
+.planner-card { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 14px; }
+.planner-card h3 { font-size: 12px; font-weight: 600; color: var(--blue); margin-bottom: 12px; }
+.slider-row { display: flex; align-items: center; gap: 10px; padding: 8px 0; }
+.slider-row label { font-size: 11px; width: 80px; flex-shrink: 0; }
+.slider-row input[type=range] { flex: 1; accent-color: var(--blue); }
+.slider-row .s-val { font-size: 14px; font-weight: 700; color: var(--blue); width: 50px; text-align: right; }
+.planner-result { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border); }
+.planner-result .pr-line { display: flex; justify-content: space-between; padding: 3px 0; font-size: 11px; }
+.planner-result .pr-line .pr-label { color: var(--muted); }
+.planner-result .pr-line .pr-val { font-weight: 600; }
+
+.empty-state { text-align: center; padding: 40px; color: var(--muted); font-size: 12px; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>📞 Connect Operations Dashboard</h1>
+  <div class="time-toggle">
+    <button class="time-btn active" data-time="today">Today</button>
+    <button class="time-btn" data-time="hour">This Hour</button>
+    <button class="time-btn" data-time="week">7 Days</button>
+    <button class="time-btn" data-time="plan">Plan Migration</button>
+  </div>
+</div>
+
+<div class="health-strip" id="health-strip"></div>
+
+<div class="main">
+  <div class="content" id="content"></div>
+  <div class="detail-panel" id="detail-panel">
+    <div class="empty-state">Select a line or metric for details</div>
+  </div>
+</div>
+
+<script>
+// ═══════════════════════════════════════════════════════════════════════════════
+// DATA — Customer-friendly model (volumes, not TPS)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+const LINES = [
+  {
+    id: 'claims', name: 'Claims', number: '1-800-555-0100', numbers: 18200,
+    today: 198000, hour: 14200, week: [195000, 189000, 201000, 197000, 54000, 22000, 210000],
+    hourly: [0,0,0,0,0,120,890,4200,12800,14200,13900,12100,11800,10200,9400,8100,5200,2800,1400,600,200,80,0,0],
+    capacityPct: 78, peakHour: '10-11am', trend: '+8%', trendDir: 'up',
+    flows: [
+      { name: 'Claims Entry', vol: 125000, pct: 63 },
+      { name: 'Auto Total Loss (Auto Claims)', vol: 43000, pct: 22 },
+      { name: 'Claims Callback', vol: 30000, pct: 15 }
+    ]
+  },
+  {
+    id: 'sales', name: 'Sales', number: '1-800-555-0200', numbers: 12400,
+    today: 142000, hour: 9800, week: [138000, 141000, 145000, 140000, 39000, 15000, 152000],
+    hourly: [0,0,0,0,0,80,620,3100,8900,9800,9600,8800,8500,7400,6900,5800,3900,2100,900,400,100,40,0,0],
+    capacityPct: 62, peakHour: '10-11am', trend: '+3%', trendDir: 'up',
+    flows: [
+      { name: 'Sales Direct', vol: 107000, pct: 75 },
+      { name: 'Sales Warmup (Bot)', vol: 35000, pct: 25 }
+    ]
+  },
+  {
+    id: 'service', name: 'Service & Billing', number: '1-800-555-0300', numbers: 8100,
+    today: 98000, hour: 7100, week: [95000, 97000, 101000, 96000, 28000, 11000, 104000],
+    hourly: [0,0,0,0,0,50,410,2200,6200,7100,6900,6400,6100,5300,4800,4100,2800,1500,700,300,80,30,0,0],
+    capacityPct: 51, peakHour: '10-11am', trend: '-1%', trendDir: 'down',
+    flows: [
+      { name: 'Service Main', vol: 72000, pct: 73 },
+      { name: 'Self-Service (EBIP)', vol: 26000, pct: 27 }
+    ]
+  },
+  {
+    id: 'natgen', name: 'Subsidiary', number: 'Local DIDs', numbers: 2520,
+    today: 37800, hour: 2700, week: [36000, 37000, 38000, 37500, 10000, 4000, 40000],
+    hourly: [0,0,0,0,0,30,190,980,2400,2700,2600,2400,2300,2000,1800,1500,1000,520,240,100,40,10,0,0],
+    capacityPct: 34, peakHour: '10-11am', trend: '+12%', trendDir: 'up',
+    flows: [
+      { name: 'Subsidiary Entry', vol: 21000, pct: 56 },
+      { name: 'Subsidiary Sales', vol: 12600, pct: 33 },
+      { name: 'Subsidiary Agency', vol: 4200, pct: 11 }
+    ]
+  },
+  {
+    id: 'agency', name: 'Agency / Partner Platform', number: 'Agent DIDs', numbers: 3600,
+    today: 47000, hour: 3400, week: [45000, 46000, 48000, 47000, 13000, 5000, 50000],
+    hourly: [0,0,0,0,0,40,240,1200,3000,3400,3300,3100,2900,2500,2300,1900,1300,700,320,140,50,20,0,0],
+    capacityPct: 42, peakHour: '10-11am', trend: '+2%', trendDir: 'up',
+    flows: [
+      { name: 'Partner Platform Flow', vol: 32000, pct: 68 },
+      { name: 'Agency ATSC', vol: 15000, pct: 32 }
+    ]
+  }
+];
+
+// Capacity = calls you can handle before API quotas degrade
+const TOTAL_CAPACITY = {
+  maxCallsPerDay: 870000,  // before any API hits 100%
+  currentDaily: 522800,
+  headroomCalls: 347200,
+  limitingApi: 'GetContactAttributes',
+  limitingPct: 87
+};
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// STATE
+// ═══════════════════════════════════════════════════════════════════════════════
+
+let state = { timeView: 'today', selectedLine: null, waveNumbers: 500 };
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// TIME TOGGLE
+// ═══════════════════════════════════════════════════════════════════════════════
+
+document.querySelectorAll('.time-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    state.timeView = btn.dataset.time;
+    document.querySelectorAll('.time-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    render();
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// RENDER: HEALTH STRIP (always visible)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+function renderHealthStrip() {
+  const strip = document.getElementById('health-strip');
+  strip.innerHTML = LINES.map(line => {
+    const vol = state.timeView === 'hour' ? line.hour :
+                state.timeView === 'week' ? line.week.reduce((a,b) => a+b, 0) :
+                line.today;
+    const volLabel = state.timeView === 'hour' ? 'this hour' :
+                     state.timeView === 'week' ? 'this week' : 'today';
+    const statusColor = line.capacityPct > 80 ? 'red' : line.capacityPct > 60 ? 'yellow' : 'green';
+    const capColor = statusColor === 'red' ? 'var(--red)' : statusColor === 'yellow' ? 'var(--yellow)' : 'var(--green)';
+
+    return `
+      <div class="health-pill ${state.selectedLine === line.id ? 'selected' : ''}" onclick="selectLine('${line.id}')">
+        <div style="display:flex;align-items:center;gap:4px;">
+          <span class="pill-status ${statusColor}"></span>
+          <span class="pill-name">${line.name}</span>
+        </div>
+        <div class="pill-vol">${formatNum(vol)}</div>
+        <div class="pill-meta">${formatNum(line.numbers)} numbers · ${volLabel}</div>
+        <div class="pill-capacity"><div class="fill" style="width:${line.capacityPct}%; background:${capColor}"></div></div>
+        <div class="pill-meta" style="margin-top:3px">${line.capacityPct}% capacity used</div>
+      </div>
+    `;
+  }).join('');
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// RENDER: MAIN CONTENT (changes by time view)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+function renderContent() {
+  const content = document.getElementById('content');
+
+  if (state.timeView === 'plan') {
+    content.innerHTML = renderPlanner();
+    return;
+  }
+
+  const line = state.selectedLine ? LINES.find(l => l.id === state.selectedLine) : null;
+
+  if (!line) {
+    content.innerHTML = renderOverview();
+    return;
+  }
+
+  content.innerHTML = renderLineDetail(line);
+}
+
+function renderOverview() {
+  const totalVol = LINES.reduce((s, l) => s + (state.timeView === 'hour' ? l.hour : l.today), 0);
+  const timeLabel = state.timeView === 'hour' ? 'this hour' : state.timeView === 'week' ? 'this week' : 'today';
+
+  return `
+    <div class="chart-section">
+      <div class="chart-header">
+        <h2>All Lines — ${formatNum(totalVol)} calls ${timeLabel}</h2>
+        <span class="trend up">System healthy · ${TOTAL_CAPACITY.headroomCalls.toLocaleString()} calls of headroom remaining</span>
+      </div>
+      ${renderHourChart(aggregateHourly())}
+    </div>
+    <div class="capacity-section">
+      <div class="chart-header"><h2>Capacity by Line</h2></div>
+      <div class="capacity-grid">
+        ${LINES.map(l => renderCapacityCard(l)).join('')}
+      </div>
+    </div>
+  `;
+}
+
+function renderLineDetail(line) {
+  const vol = state.timeView === 'hour' ? line.hour : line.today;
+  const timeLabel = state.timeView === 'hour' ? 'this hour' : 'today';
+
+  return `
+    <div class="chart-section">
+      <div class="chart-header">
+        <h2>${line.name} — ${formatNum(vol)} calls ${timeLabel}</h2>
+        <span class="trend ${line.trendDir}">${line.trend} vs last week</span>
+      </div>
+      ${renderHourChart(line.hourly)}
+      <div style="font-size:10px;color:var(--muted);margin-top:6px;">Peak hour: ${line.peakHour} · ${line.number} · ${formatNum(line.numbers)} numbers</div>
+    </div>
+
+    <div class="capacity-section">
+      <div class="chart-header"><h2>Capacity Status</h2></div>
+      ${renderCapacityCard(line)}
+      <div style="font-size:11px;color:var(--muted);margin-top:8px;">
+        You can handle <strong style="color:var(--text)">${formatNum(Math.round(vol / line.capacityPct * (100 - line.capacityPct)))}</strong> more calls ${timeLabel} before degradation on this line.
+      </div>
+    </div>
+
+    <div class="drill-section">
+      <h3>Where calls go (Contact Flows)</h3>
+      ${line.flows.map(f => `
+        <div class="drill-item" onclick="selectFlow('${f.name}')">
+          <span class="d-name">${f.name}</span>
+          <div class="d-bar"><div class="fill" style="width:${f.pct}%; background:var(--purple)"></div></div>
+          <span class="d-vol">${formatNum(f.vol)} (${f.pct}%)</span>
+        </div>
+      `).join('')}
+    </div>
+  `;
+}
+
+function renderPlanner() {
+  const additionalCalls = state.waveNumbers * 15; // contacts/day per number
+  const newTotal = TOTAL_CAPACITY.currentDaily + additionalCalls;
+  const newPct = Math.round(newTotal / TOTAL_CAPACITY.maxCallsPerDay * 100);
+  const safe = newPct < 70;
+  const warning = newPct >= 70 && newPct < 90;
+  const danger = newPct >= 90;
+  const statusColor = danger ? 'var(--red)' : warning ? 'var(--yellow)' : 'var(--green)';
+  const statusLabel = danger ? '🔴 At risk — file quota increase NOW' : warning ? '🟡 Caution — file quota increase before migration' : '🟢 Safe — within capacity';
+
+  return `
+    <div class="planner-section">
+      <div class="planner-card">
+        <h3>Migration Wave Planner</h3>
+        <p style="font-size:11px;color:var(--muted);margin-bottom:16px;">How many phone numbers are you adding in this wave?</p>
+
+        <div class="slider-row">
+          <label>Numbers:</label>
+          <input type="range" min="0" max="5000" step="50" value="${state.waveNumbers}" oninput="updateWave(this.value)">
+          <span class="s-val" id="wave-val">${state.waveNumbers}</span>
+        </div>
+
+        <div class="planner-result">
+          <div class="pr-line"><span class="pr-label">Additional calls/day</span><span class="pr-val">+${formatNum(additionalCalls)}</span></div>
+          <div class="pr-line"><span class="pr-label">Current daily volume</span><span class="pr-val">${formatNum(TOTAL_CAPACITY.currentDaily)}</span></div>
+          <div class="pr-line"><span class="pr-label">Projected daily volume</span><span class="pr-val" style="color:${statusColor}">${formatNum(newTotal)}</span></div>
+          <div class="pr-line"><span class="pr-label">System capacity used</span><span class="pr-val" style="color:${statusColor}">${newPct}%</span></div>
+          <div class="pr-line" style="padding-top:8px;border-top:1px solid var(--border);margin-top:8px;">
+            <span class="pr-label">Status</span><span class="pr-val">${statusLabel}</span>
+          </div>
+          <div class="pr-line"><span class="pr-label">Calls before degradation</span><span class="pr-val">${formatNum(TOTAL_CAPACITY.maxCallsPerDay - newTotal)}</span></div>
+          <div class="pr-line"><span class="pr-label">Limiting factor</span><span class="pr-val">${TOTAL_CAPACITY.limitingApi} (${TOTAL_CAPACITY.limitingPct}% today)</span></div>
+        </div>
+      </div>
+
+      <div style="margin-top:16px;padding:12px;background:var(--panel);border:1px solid var(--border);border-radius:8px;">
+        <h3 style="font-size:12px;margin-bottom:8px;">Recommendations</h3>
+        ${danger ? `
+          <p style="font-size:11px;color:var(--red);margin-bottom:6px;">⚠️ This migration wave will likely cause call degradation.</p>
+          <p style="font-size:11px;color:var(--muted);">File a Service Limit Increase (SLI) for GetContactAttributes before proceeding. Allow 3-5 business days for processing.</p>
+        ` : warning ? `
+          <p style="font-size:11px;color:var(--yellow);margin-bottom:6px;">⚡ This wave brings you close to capacity limits.</p>
+          <p style="font-size:11px;color:var(--muted);">File a preemptive SLI for GetContactAttributes. Consider splitting into two smaller waves.</p>
+        ` : `
+          <p style="font-size:11px;color:var(--green);margin-bottom:6px;">✅ This wave is within safe capacity.</p>
+          <p style="font-size:11px;color:var(--muted);">No quota increases needed. Monitor for 24 hours after migration to confirm.</p>
+        `}
+      </div>
+    </div>
+  `;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// RENDER: COMPONENTS
+// ═══════════════════════════════════════════════════════════════════════════════
+
+function renderHourChart(hourly) {
+  const max = Math.max(...hourly, 1);
+  const hours = ['12a','','2a','','4a','','6a','','8a','','10a','','12p','','2p','','4p','','6p','','8p','','10p',''];
+
+  return `
+    <div class="hour-chart">
+      ${hourly.map((v, i) => {
+        const h = Math.max((v / max) * 100, 1);
+        const color = v === max ? 'var(--yellow)' : 'var(--blue)';
+        const label = `${hours[i] || i + ':00'}: ${formatNum(v)} calls`;
+        return `<div class="hour-bar" style="height:${h}%;background:${color}"><span class="bar-tip">${label}</span></div>`;
+      }).join('')}
+    </div>
+    <div class="chart-labels">${hours.map(h => `<span>${h}</span>`).join('')}</div>
+  `;
+}
+
+function renderCapacityCard(line) {
+  const pct = line.capacityPct;
+  const color = pct > 80 ? 'var(--red)' : pct > 60 ? 'var(--yellow)' : 'var(--green)';
+  const remaining = Math.round(line.today / pct * (100 - pct));
+
+  return `
+    <div class="capacity-card" onclick="selectLine('${line.id}')">
+      <div class="cap-header">
+        <span class="cap-name">${line.name}</span>
+        <span class="cap-pct" style="color:${color}">${pct}%</span>
+      </div>
+      <div class="cap-bar"><div class="fill" style="width:${pct}%;background:${color}"></div></div>
+      <div class="cap-remaining">Can handle <strong>${formatNum(remaining)}</strong> more calls today</div>
+    </div>
+  `;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// RENDER: DETAIL PANEL
+// ═══════════════════════════════════════════════════════════════════════════════
+
+function renderDetailPanel() {
+  const panel = document.getElementById('detail-panel');
+  const line = state.selectedLine ? LINES.find(l => l.id === state.selectedLine) : null;
+
+  if (!line) {
+    panel.innerHTML = '<div class="empty-state">Select a line to see details</div>';
+    return;
+  }
+
+  panel.innerHTML = `
+    <div class="detail-card">
+      <h4>Line Summary</h4>
+      <div class="detail-row"><span class="label">Phone number</span><span class="value">${line.number}</span></div>
+      <div class="detail-row"><span class="label">Total numbers</span><span class="value">${formatNum(line.numbers)}</span></div>
+      <div class="detail-row"><span class="label">Today's volume</span><span class="value">${formatNum(line.today)}</span></div>
+      <div class="detail-row"><span class="label">This hour</span><span class="value">${formatNum(line.hour)}</span></div>
+      <div class="detail-row"><span class="label">Peak hour</span><span class="value">${line.peakHour}</span></div>
+      <div class="detail-row"><span class="label">Trend</span><span class="value" style="color:${line.trendDir === 'up' ? 'var(--green)' : 'var(--red)'}">${line.trend} vs last week</span></div>
+    </div>
+    <div class="detail-card">
+      <h4>Capacity</h4>
+      <div class="detail-row"><span class="label">Current utilization</span><span class="value">${line.capacityPct}%</span></div>
+      <div class="detail-row"><span class="label">Remaining headroom</span><span class="value">${formatNum(Math.round(line.today / line.capacityPct * (100 - line.capacityPct)))} calls</span></div>
+      <div class="detail-row"><span class="label">Before degradation</span><span class="value" style="color:${line.capacityPct > 80 ? 'var(--red)' : 'var(--green)'}">~${formatNum(Math.round(line.today / line.capacityPct * 100))} calls/day max</span></div>
+    </div>
+    <div class="detail-card">
+      <h4>7-Day Volume</h4>
+      <div style="display:flex;align-items:flex-end;gap:3px;height:50px;">
+        ${line.week.map((v, i) => {
+          const max = Math.max(...line.week);
+          const h = (v / max * 100);
+          const days = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+          return `<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:2px;">
+            <div style="width:100%;height:${h}%;background:var(--blue);border-radius:2px;min-height:2px;"></div>
+            <span style="font-size:8px;color:var(--muted)">${days[i]}</span>
+          </div>`;
+        }).join('')}
+      </div>
+    </div>
+  `;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// INTERACTIONS
+// ═══════════════════════════════════════════════════════════════════════════════
+
+function selectLine(id) {
+  state.selectedLine = state.selectedLine === id ? null : id;
+  render();
+}
+
+function selectFlow(name) {
+  const panel = document.getElementById('detail-panel');
+  const line = LINES.find(l => l.id === state.selectedLine);
+  const flow = line ? line.flows.find(f => f.name === name) : null;
+  if (!flow) return;
+
+  // Flow → Lambda chain → API impact (customer-friendly)
+  const chain = FLOW_DETAIL[name] || FLOW_DETAIL['_default'];
+  const dailyVol = flow.vol;
+
+  panel.innerHTML = `
+    <div class="detail-card">
+      <h4>📞 ${name}</h4>
+      <div class="detail-row"><span class="label">Calls today</span><span class="value">${formatNum(dailyVol)}</span></div>
+      <div class="detail-row"><span class="label">Share of line</span><span class="value">${flow.pct}%</span></div>
+      <div class="detail-row"><span class="label">Steps per call</span><span class="value">${chain.steps.length}</span></div>
+    </div>
+
+    <div class="detail-card">
+      <h4>What happens during each call</h4>
+      ${chain.steps.map((step, i) => `
+        <div style="display:flex;align-items:flex-start;padding:5px 0;${i > 0 ? 'border-top:1px solid #21262d;' : ''}">
+          <span style="font-size:14px;margin-right:8px;">${step.icon}</span>
+          <div style="flex:1;">
+            <div style="font-size:11px;font-weight:500;">${step.label}</div>
+            <div style="font-size:10px;color:var(--muted);">${step.detail}</div>
+          </div>
+          <span style="font-size:10px;color:var(--cyan);white-space:nowrap;">${formatNum(Math.round(dailyVol * step.pctCalls))}/day</span>
+        </div>
+      `).join('')}
+    </div>
+
+    <div class="detail-card">
+      <h4>API Capacity Used by This Flow</h4>
+      <div style="font-size:10px;color:var(--muted);margin-bottom:8px;">How much of your system capacity this flow consumes</div>
+      ${chain.apis.map(api => {
+        const overall = SYSTEM_API_USAGE[api.name] || { total: api.tps, limit: api.limit };
+        const totalPct = (overall.total / overall.limit * 100).toFixed(0);
+        const flowPct = (api.tps / overall.limit * 100).toFixed(0);
+        const totalColor = totalPct > 80 ? 'var(--red)' : totalPct > 60 ? 'var(--yellow)' : 'var(--green)';
+        const flowBarW = Math.max(flowPct, 2);
+        const totalBarW = Math.max(totalPct, 3);
+        return `
+          <div style="padding:6px 0;border-bottom:1px solid #21262d;">
+            <div style="display:flex;justify-content:space-between;font-size:10px;margin-bottom:3px;">
+              <span>${api.name}</span>
+              <span style="color:${totalColor}">System: ${overall.total} / ${overall.limit} TPS (${totalPct}%)</span>
+            </div>
+            <div style="height:6px;background:#21262d;border-radius:3px;overflow:hidden;position:relative;">
+              <div style="position:absolute;width:${totalBarW}%;height:100%;background:${totalColor};opacity:0.3;border-radius:3px;"></div>
+              <div style="position:relative;width:${flowBarW}%;height:100%;background:var(--cyan);border-radius:3px;"></div>
+            </div>
+            <div style="font-size:9px;color:var(--muted);margin-top:2px;">This flow: ${api.tps} TPS (${flowPct}% of limit) · Remaining headroom: ${(overall.limit - overall.total).toFixed(1)} TPS</div>
+          </div>
+        `;
+      }).join('')}
+    </div>
+
+    <div class="detail-card" style="border-color:var(--border);">
+      <h4>⚡ If volume increases 25% on this flow</h4>
+      ${chain.apis.map(api => {
+        const additional = api.tps * 0.25;
+        const overall = SYSTEM_API_USAGE[api.name] || { total: api.tps, limit: api.limit };
+        const newSystemTotal = overall.total + additional;
+        const newPct = (newSystemTotal / overall.limit * 100).toFixed(0);
+        const safe = newPct < 70;
+        const warn = newPct >= 70 && newPct < 90;
+        const color = !safe && !warn ? 'var(--red)' : warn ? 'var(--yellow)' : 'var(--green)';
+        const icon = !safe && !warn ? '🔴' : warn ? '⚠️' : '✓';
+        const headroom = (overall.limit - newSystemTotal).toFixed(1);
+        return `<div style="font-size:10px;padding:3px 0;color:${color}">
+          ${icon} ${api.name}: system ${newSystemTotal.toFixed(1)} / ${overall.limit} TPS (${newPct}%) · ${headroom > 0 ? headroom + ' TPS headroom' : 'OVER LIMIT'}
+        </div>`;
+      }).join('')}
+    </div>
+  `;
+}
+
+// System-wide API usage (all flows combined) — from CloudWatch
+const SYSTEM_API_USAGE = {
+  'GetContactAttributes': { total: 52, limit: 60 },
+  'UpdateContactAttributes': { total: 14, limit: 20 },
+  'DescribeContact': { total: 28, limit: 50 },
+  'GetMetricDataV2': { total: 6.2, limit: 10 },
+  'GetCurrentMetricData': { total: 4.1, limit: 8 },
+  'StartOutboundVoiceContact': { total: 0.8, limit: 2 },
+  'StopContact': { total: 2.8, limit: 5 },
+  'TagContact': { total: 18, limit: 50 },
+  'TransferContact': { total: 1.1, limit: 2 },
+  'SearchContacts': { total: 0.3, limit: 1 }
+};
+
+// Flow detail data — what happens inside each flow
+const FLOW_DETAIL = {
+  'Claims Entry': {
+    steps: [
+      { icon: '🔍', label: 'Look up caller', detail: 'Identifies who is calling based on phone number', pctCalls: 1.0 },
+      { icon: '🕐', label: 'Check business hours', detail: 'Determines if office is open, checks holidays', pctCalls: 1.0 },
+      { icon: '🤖', label: 'AI bot determines intent', detail: 'Lex bot asks what they need (file claim, check status, etc.)', pctCalls: 0.75 },
+      { icon: '📊', label: 'Check queue health', detail: 'Finds the best queue with shortest wait', pctCalls: 1.0 },
+      { icon: '👤', label: 'Route to agent', detail: 'Connects caller to the right specialist', pctCalls: 1.0 }
+    ],
+    apis: [
+      { name: 'GetContactAttributes', tps: 6.9, limit: 60 },
+      { name: 'UpdateContactAttributes', tps: 5.2, limit: 20 },
+      { name: 'DescribeContact', tps: 6.9, limit: 50 },
+      { name: 'GetMetricDataV2', tps: 4.8, limit: 10 },
+      { name: 'GetCurrentMetricData', tps: 4.8, limit: 8 }
+    ]
+  },
+  'Auto Total Loss (Auto Claims)': {
+    steps: [
+      { icon: '🚗', label: 'Identify vehicle claim', detail: 'Matches caller to an existing auto claim', pctCalls: 1.0 },
+      { icon: '📋', label: 'Pull claim status', detail: 'Retrieves total loss assessment details', pctCalls: 1.0 },
+      { icon: '👤', label: 'Route to adjuster', detail: 'Connects to assigned total loss adjuster', pctCalls: 1.0 }
+    ],
+    apis: [
+      { name: 'GetContactAttributes', tps: 2.3, limit: 60 },
+      { name: 'UpdateContactAttributes', tps: 2.3, limit: 20 },
+      { name: 'DescribeContact', tps: 2.3, limit: 50 },
+      { name: 'TagContact', tps: 2.3, limit: 50 },
+      { name: 'GetMetricDataV2', tps: 2.3, limit: 10 }
+    ]
+  },
+  'Claims Callback': {
+    steps: [
+      { icon: '🔍', label: 'Look up caller', detail: 'Identifies caller from phone number', pctCalls: 1.0 },
+      { icon: '🕐', label: 'Check business hours', detail: 'If after hours, offers callback', pctCalls: 1.0 },
+      { icon: '📞', label: 'Schedule callback', detail: 'Records callback request for next business day', pctCalls: 0.7 }
+    ],
+    apis: [
+      { name: 'GetContactAttributes', tps: 1.6, limit: 60 },
+      { name: 'DescribeContact', tps: 1.6, limit: 50 },
+      { name: 'StartOutboundVoiceContact', tps: 1.6, limit: 2 }
+    ]
+  },
+  'Sales Direct': {
+    steps: [
+      { icon: '🔍', label: 'Look up caller', detail: 'Checks if existing customer or new prospect', pctCalls: 1.0 },
+      { icon: '🕐', label: 'Check business hours', detail: 'Routes to voicemail if closed', pctCalls: 1.0 },
+      { icon: '🤖', label: 'Sales bot qualification', detail: 'Bot asks about insurance needs (auto, home, life)', pctCalls: 0.75 },
+      { icon: '👤', label: 'Route to sales agent', detail: 'Matches to licensed agent for caller state', pctCalls: 1.0 },
+      { icon: '📞', label: 'Voicemail if unavailable', detail: 'Offers callback if wait time > threshold', pctCalls: 0.25 }
+    ],
+    apis: [
+      { name: 'GetContactAttributes', tps: 4.9, limit: 60 },
+      { name: 'UpdateContactAttributes', tps: 3.7, limit: 20 },
+      { name: 'DescribeContact', tps: 4.9, limit: 50 },
+      { name: 'GetMetricDataV2', tps: 4.9, limit: 10 },
+      { name: 'StartOutboundVoiceContact', tps: 1.2, limit: 2 }
+    ]
+  },
+  'Sales Warmup (Bot)': {
+    steps: [
+      { icon: '🔍', label: 'Look up caller', detail: 'Identifies caller', pctCalls: 1.0 },
+      { icon: '🤖', label: 'Pre-qualification bot', detail: 'Warms up caller before connecting to agent', pctCalls: 1.0 }
+    ],
+    apis: [
+      { name: 'GetContactAttributes', tps: 1.3, limit: 60 },
+      { name: 'DescribeContact', tps: 1.3, limit: 50 }
+    ]
+  },
+  'Subsidiary Entry': {
+    steps: [
+      { icon: '🔍', label: 'Look up caller', detail: 'Identifies Subsidiary customer from DID', pctCalls: 1.0 },
+      { icon: '🕐', label: 'Check business hours', detail: 'Subsidiary hours may differ from Allstate core', pctCalls: 1.0 },
+      { icon: '🤖', label: 'AI bot determines intent', detail: 'Routes to claims, sales, or service', pctCalls: 0.7 },
+      { icon: '👤', label: 'Route to Subsidiary agent', detail: 'Connects to Subsidiary-specific agent pool', pctCalls: 1.0 }
+    ],
+    apis: [
+      { name: 'GetContactAttributes', tps: 0.7, limit: 60 },
+      { name: 'UpdateContactAttributes', tps: 0.5, limit: 20 },
+      { name: 'GetMetricDataV2', tps: 0.7, limit: 10 }
+    ]
+  },
+  'Subsidiary Sales': {
+    steps: [
+      { icon: '🔍', label: 'Look up caller', detail: 'Identifies prospect', pctCalls: 1.0 },
+      { icon: '🕐', label: 'Check hours', detail: 'Business hours check', pctCalls: 1.0 },
+      { icon: '👤', label: 'Route to sales', detail: 'Connects to Subsidiary sales team', pctCalls: 1.0 }
+    ],
+    apis: [
+      { name: 'GetContactAttributes', tps: 0.4, limit: 60 },
+      { name: 'GetMetricDataV2', tps: 0.4, limit: 10 }
+    ]
+  },
+  'Subsidiary Agency': {
+    steps: [
+      { icon: '🔍', label: 'Look up agency', detail: 'Identifies calling agency from DID', pctCalls: 1.0 },
+      { icon: '🕐', label: 'Check hours', detail: 'Business hours check', pctCalls: 1.0 },
+      { icon: '🏢', label: 'Agency routing', detail: 'Routes to assigned agency support team', pctCalls: 1.0 }
+    ],
+    apis: [
+      { name: 'GetContactAttributes', tps: 0.15, limit: 60 }
+    ]
+  },
+  'Service Main': {
+    steps: [
+      { icon: '🔍', label: 'Look up caller', detail: 'Identifies customer account', pctCalls: 1.0 },
+      { icon: '🕐', label: 'Check business hours', detail: 'Routes to self-service if closed', pctCalls: 1.0 },
+      { icon: '👤', label: 'Route to service agent', detail: 'Billing, policy changes, documents', pctCalls: 1.0 }
+    ],
+    apis: [
+      { name: 'GetContactAttributes', tps: 2.5, limit: 60 },
+      { name: 'DescribeContact', tps: 2.5, limit: 50 },
+      { name: 'GetMetricDataV2', tps: 2.5, limit: 10 }
+    ]
+  },
+  'Self-Service (EBIP)': {
+    steps: [
+      { icon: '🤖', label: 'Self-service bot', detail: 'Handles billing inquiries, ID cards, payments without agent', pctCalls: 1.0 },
+      { icon: '📋', label: 'Process request', detail: 'Completes self-service action', pctCalls: 0.8 },
+      { icon: '👤', label: 'Escalate if needed', detail: 'Transfers to agent if bot cannot resolve', pctCalls: 0.3 }
+    ],
+    apis: [
+      { name: 'GetContactAttributes', tps: 0.9, limit: 60 },
+      { name: 'UpdateContactAttributes', tps: 0.9, limit: 20 },
+      { name: 'GetMetricDataV2', tps: 0.9, limit: 10 }
+    ]
+  },
+  'Partner Platform Flow': {
+    steps: [
+      { icon: '🔍', label: 'Identify agent', detail: 'Looks up calling insurance agent', pctCalls: 1.0 },
+      { icon: '🕐', label: 'Check hours', detail: 'Business hours for agent support', pctCalls: 1.0 },
+      { icon: '🏢', label: 'Partner Platform routing', detail: 'Routes to Partner Platform platform support', pctCalls: 1.0 }
+    ],
+    apis: [
+      { name: 'GetContactAttributes', tps: 1.1, limit: 60 },
+      { name: 'UpdateContactAttributes', tps: 0.8, limit: 20 },
+      { name: 'GetMetricDataV2', tps: 1.1, limit: 10 }
+    ]
+  },
+  'Agency ATSC': {
+    steps: [
+      { icon: '🔍', label: 'Identify agency', detail: 'Looks up agent from caller ID', pctCalls: 1.0 },
+      { icon: '🏢', label: 'ATSC routing', detail: 'Routes to Agency Technology Support Center', pctCalls: 1.0 }
+    ],
+    apis: [
+      { name: 'GetContactAttributes', tps: 0.5, limit: 60 },
+      { name: 'UpdateContactAttributes', tps: 0.5, limit: 20 },
+      { name: 'GetMetricDataV2', tps: 0.5, limit: 10 }
+    ]
+  },
+  '_default': {
+    steps: [
+      { icon: '🔍', label: 'Identify caller', detail: 'Looks up caller information', pctCalls: 1.0 },
+      { icon: '👤', label: 'Route to agent', detail: 'Connects to appropriate agent', pctCalls: 1.0 }
+    ],
+    apis: [
+      { name: 'GetContactAttributes', tps: 1.0, limit: 60 }
+    ]
+  }
+};
+
+function updateWave(val) {
+  state.waveNumbers = parseInt(val);
+  document.getElementById('wave-val').textContent = val;
+  renderContent();
+}
+
+function aggregateHourly() {
+  const agg = new Array(24).fill(0);
+  LINES.forEach(l => l.hourly.forEach((v, i) => agg[i] += v));
+  return agg;
+}
+
+function formatNum(n) {
+  if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M';
+  if (n >= 1000) return (n / 1000).toFixed(0) + 'K';
+  return n.toLocaleString();
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// RENDER
+// ═══════════════════════════════════════════════════════════════════════════════
+
+function render() {
+  renderHealthStrip();
+  renderContent();
+  renderDetailPanel();
+}
+
+render();
+</script>
+</body>
+</html>

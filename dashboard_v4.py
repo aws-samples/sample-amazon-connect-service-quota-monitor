@@ -1009,7 +1009,7 @@ function renderOverview() {{
     <div class="chart-section">
       <div class="chart-header">
         <h2>All Lines — ${{formatNum(totalVol)}} calls ${{timeLabel}}</h2>
-        <span class="trend up">System healthy · ${{TOTAL_CAPACITY.headroomCalls.toLocaleString()}} calls of headroom remaining</span>
+        <span class="trend up">System healthy · ${{isFinite(TOTAL_CAPACITY.headroomCalls) ? TOTAL_CAPACITY.headroomCalls.toLocaleString() : '—'}} calls of headroom remaining</span>
       </div>
       ${{renderHourChart(aggregateHourly())}}
     </div>
@@ -1224,7 +1224,7 @@ function renderHourChart(hourly) {{
 function renderCapacityCard(line) {{
   const pct = line.capacityPct;
   const color = pct > 80 ? 'var(--red)' : pct > 60 ? 'var(--yellow)' : 'var(--green)';
-  const remaining = Math.round(line.today / pct * (100 - pct));
+  const remaining = pct > 0 ? Math.round(line.today / pct * (100 - pct)) : 0;
   return `
     <div class="capacity-card" onclick="selectLine('${{line.id}}')">
       <div class="cap-header"><span class="cap-name">${{line.name}}</span><span class="cap-pct" style="color:${{color}}">${{pct}}%</span></div>
@@ -1251,7 +1251,7 @@ function renderDetailPanel() {{
     <div class="detail-card">
       <h4>Capacity</h4>
       <div class="detail-row"><span class="label">Current utilization</span><span class="value">${{line.capacityPct}}%</span></div>
-      <div class="detail-row"><span class="label">Remaining headroom</span><span class="value">${{formatNum(Math.round(line.today / line.capacityPct * (100 - line.capacityPct)))}} calls</span></div>
+      <div class="detail-row"><span class="label">Remaining headroom</span><span class="value">${{line.capacityPct > 0 ? formatNum(Math.round(line.today / line.capacityPct * (100 - line.capacityPct))) : 'Unlimited'}} calls</span></div>
     </div>
     <div class="detail-card">
       <h4>7-Day Volume</h4>

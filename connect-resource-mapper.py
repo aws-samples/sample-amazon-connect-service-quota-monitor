@@ -1134,7 +1134,13 @@ def main() -> None:
     with open(model_path, "w", encoding="utf-8") as f:
         json.dump(model, f, indent=2, default=str)
 
-    generate_dashboard(resource_map, model, dashboard_path)
+    import dashboard_v4
+    line_config = {}
+    line_config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "line-config.json")
+    if os.path.exists(line_config_path):
+        with open(line_config_path, "r", encoding="utf-8") as f:
+            line_config = json.load(f)
+    dashboard_v4.generate_v4_dashboard(resource_map, model, line_config, dashboard_path)
 
     # ── Consolidated API Report (always generated) ──
     import consolidated_report

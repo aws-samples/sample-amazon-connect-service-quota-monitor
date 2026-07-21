@@ -2,7 +2,7 @@
 SOLUTION_OVERVIEW.md
 
 # JSON reports and HTML reports
-*.json
+# *.json -- removed: quota_definitions.json must be committed
 reports/
 reports/*.json
 reports/*.html
@@ -75,3 +75,5 @@ CONNECT_BEST_PRACTICES.md
 test-v1/
 test-output/
 v1-test/
+!quota_definitions.json
+output/*.json

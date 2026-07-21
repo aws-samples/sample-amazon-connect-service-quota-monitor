@@ -1,6 +1,6 @@
 # Getting Started — Full Setup Guide
 
-This guide walks you through every step from zero to a working dashboard. Follow it exactly — if something looks different from what's described, check [Troubleshooting](TROUBLESHOOTING.md).
+This guide walks you through every step from zero to a working dashboard. Follow it exactly — if something looks different from what's described, check the Common Issues section in the README.
 
 ---
 
@@ -293,7 +293,7 @@ Your browser opens with the dashboard. You should see:
 
 - **Want it to refresh automatically?** Deploy the Lambda → [live-refresh/README.md](../live-refresh/README.md)
 - **Need secure hosting with SSO?** Set up CloudFront + Cognito → [cloudfront-auth/README.md](../cloudfront-auth/README.md)
-- **Want to group by business line?** Configure line-config.json → [BUSINESS_LINES.md](BUSINESS_LINES.md)
+- **Want to group by business line?** Configure line-config.json → the Configuring Business Lines section in `line-config.json`
 
 ---
 

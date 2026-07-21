@@ -142,11 +142,15 @@ CONFIG = get_validated_config()
 THRESHOLD_PERCENTAGE = int(CONFIG.get('threshold_percentage', '80'))  # Default to 80% for production
 EXECUTION_ID = str(uuid.uuid4())  # Unique ID for this execution for traceability
 
-# Enhanced Connect quota codes and their corresponding metrics - Comprehensive 200+ quota coverage
-ENHANCED_CONNECT_QUOTA_METRICS = {
-    # ===== CORE AMAZON CONNECT =====
-    # Account Level Quotas
-    'L-AA17A6B9': {  # Amazon Connect instance count
+# Load quota definitions from JSON (extracted from inline dict for maintainability)
+_QUOTA_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'quota_definitions.json')
+if os.path.exists(_QUOTA_FILE):
+    with open(_QUOTA_FILE, 'r') as _f:
+        ENHANCED_CONNECT_QUOTA_METRICS = json.load(_f)
+else:
+    # Fallback: minimal inline definition if JSON not found (shouldn't happen in normal deploy)
+    ENHANCED_CONNECT_QUOTA_METRICS = {
+    'L-AA17A6B9': {
         'name': 'Amazon Connect instance count',
         'category': 'CORE_CONNECT',
         'scope': 'ACCOUNT',
@@ -156,1226 +160,6 @@ ENHANCED_CONNECT_QUOTA_METRICS = {
         'default_limit': 2,
         'context_required': False
     },
-    'L-2BE4D75F': {  # External voice transfer connectors per account
-        'name': 'External voice transfer connectors per account',
-        'category': 'CORE_CONNECT',
-        'scope': 'ACCOUNT',
-        'method': 'service_quotas',
-        'service': 'connect',
-        'default_limit': 0,
-        'context_required': False
-    },
-    'L-C970C7E8': {  # Contact Lens connectors per account
-        'name': 'Contact Lens connectors per account',
-        'category': 'CORE_CONNECT',
-        'scope': 'ACCOUNT',
-        'method': 'service_quotas',
-        'service': 'connect',
-        'default_limit': 0,
-        'context_required': False
-    },
-    
-    # Resource Level Quotas
-    'L-9A46857E': {  # Users per instance
-        'name': 'Users per instance',
-        'category': 'CORE_CONNECT',
-        'scope': 'INSTANCE',
-        'method': 'api_count',
-        'service': 'connect',
-        'api': 'list_users',
-        'default_limit': 500,
-        'context_required': False
-    },
-    'L-F325A715': {  # Security profiles per instance
-        'name': 'Security profiles per instance',
-        'category': 'CORE_CONNECT',
-        'scope': 'INSTANCE',
-        'method': 'api_count',
-        'service': 'connect',
-        'api': 'list_security_profiles',
-        'default_limit': 100,
-        'context_required': False
-    },
-    'L-D68AAAE4': {  # User hierarchy groups per instance
-        'name': 'User hierarchy groups per instance',
-        'category': 'CORE_CONNECT',
-        'scope': 'INSTANCE',
-        'method': 'api_count',
-        'service': 'connect',
-        'api': 'describe_user_hierarchy_structure',
-        'default_limit': 5,
-        'context_required': False
-    },
-    'L-E3D2F503': {  # AWS Lambda functions per instance
-        'name': 'AWS Lambda functions per instance',
-        'category': 'CORE_CONNECT',
-        'scope': 'INSTANCE',
-        'method': 'api_count',
-        'service': 'connect',
-        'api': 'list_lambda_functions',
-        'default_limit': 50,
-        'context_required': False
-    },
-    'L-8F812903': {  # Phone numbers per instance
-        'name': 'Phone numbers per instance',
-        'category': 'CORE_CONNECT',
-        'scope': 'INSTANCE',
-        'method': 'api_count',
-        'service': 'connect',
-        'api': 'list_phone_numbers_v2',
-        'default_limit': 10,
-        'context_required': False
-    },
-    'L-22922690': {  # Contact flows per instance
-        'name': 'Contact flows per instance',
-        'category': 'CORE_CONNECT',
-        'scope': 'INSTANCE',
-        'method': 'api_count',
-        'service': 'connect',
-        'api': 'list_contact_flows',
-        'default_limit': 100,
-        'context_required': False
-    },
-    'L-19755C7E': {  # Flow modules per instance
-        'name': 'Flow modules per instance',
-        'category': 'CORE_CONNECT',
-        'scope': 'INSTANCE',
-        'method': 'api_count',
-        'service': 'connect',
-        'api': 'list_contact_flow_modules',
-        'default_limit': 50,
-        'context_required': False
-    },
-    'L-3828FBF0': {  # Predefined Attributes
-        'name': 'Predefined Attributes',
-        'category': 'CORE_CONNECT',
-        'scope': 'INSTANCE',
-        'method': 'api_count',
-        'service': 'connect',
-        'api': 'list_predefined_attributes',
-        'default_limit': 128,
-        'context_required': False
-    },
-    'L-0865B754': {  # Prompts per instance
-        'name': 'Prompts per instance',
-        'category': 'CORE_CONNECT',
-        'scope': 'INSTANCE',
-        'method': 'api_count',
-        'service': 'connect',
-        'api': 'list_prompts',
-        'default_limit': 500,
-        'context_required': False
-    },
-    'L-D945C9A8': {  # Agent status per instance
-        'name': 'Agent status per instance',
-        'category': 'CORE_CONNECT',
-        'scope': 'INSTANCE',
-        'method': 'api_count',
-        'service': 'connect',
-        'api': 'list_agent_statuses',
-        'default_limit': 50,
-        'context_required': True
-    },
-
-    # ===== CONTACT HANDLING & METRICS =====
-    'L-12AB7C57': {  # Concurrent active calls per instance
-        'name': 'Concurrent active calls per instance',
-        'category': 'CONTACT_HANDLING',
-        'scope': 'INSTANCE',
-        'method': 'cloudwatch',
-        'service': 'connect',
-        'metric_name': 'ConcurrentCalls',
-        'metric_name_fallback': 'ConcurrentHighVolumeCallsPercentage',
-        'namespace': 'AWS/Connect',
-        'statistic': 'Maximum',
-        'metric_group': 'VoiceCalls',
-        'default_limit': 10,
-        'context_required': False
-    },
-    'L-D4BA6F6E': {  # Concurrent active chats per instance
-        'name': 'Concurrent active chats per instance',
-        'category': 'CONTACT_HANDLING',
-        'scope': 'INSTANCE',
-        'method': 'cloudwatch',
-        'service': 'connect',
-        'metric_name': 'ConcurrentActiveChats',
-        'namespace': 'AWS/Connect',
-        'statistic': 'Maximum',
-        'metric_group': 'Chats',
-        'default_limit': 100,
-        'context_required': False
-    },
-    'L-60553137': {  # Concurrent active tasks per instance
-        'name': 'Concurrent active tasks per instance',
-        'category': 'CONTACT_HANDLING',
-        'scope': 'INSTANCE',
-        'method': 'cloudwatch',
-        'service': 'connect',
-        'metric_name': 'ConcurrentActiveTasks',
-        'namespace': 'AWS/Connect',
-        'statistic': 'Maximum',
-        'metric_group': 'Tasks',
-        'default_limit': 2500,
-        'context_required': False
-    },
-    'L-F4C86B27': {  # Email addresses per instance
-        'name': 'Email addresses per instance',
-        'category': 'CONTACT_HANDLING',
-        'scope': 'INSTANCE',
-        'method': 'service_quotas',
-        'service': 'connect',
-        'default_limit': 100,
-        'context_required': False
-    },
-    'L-E908C3A1': {  # Concurrent campaign active calls per instance
-        'name': 'Concurrent campaign active calls per instance',
-        'category': 'CONTACT_HANDLING',
-        'scope': 'INSTANCE',
-        'method': 'cloudwatch',
-        'service': 'connectcampaigns',
-        'metric_name': 'ConcurrentCampaignCalls',
-        'namespace': 'AWS/ConnectCampaigns',
-        'statistic': 'Maximum',
-        'default_limit': 0,
-        'context_required': False
-    },
-    'L-B117F12F': {  # Concurrent active emails per instance
-        'name': 'Concurrent active emails per instance',
-        'category': 'CONTACT_HANDLING',
-        'scope': 'INSTANCE',
-        'method': 'cloudwatch',
-        'service': 'connect',
-        'metric_name': 'ConcurrentActiveEmails',
-        'namespace': 'AWS/Connect',
-        'statistic': 'Maximum',
-        'default_limit': 1000,
-        'context_required': False
-    },
-
-    # ===== ROUTING & QUEUES =====
-    'L-19A87C94': {  # Queues per instance
-        'name': 'Queues per instance',
-        'category': 'ROUTING_QUEUES',
-        'scope': 'INSTANCE',
-        'method': 'api_count',
-        'service': 'connect',
-        'api': 'list_queues',
-        'default_limit': 50,
-        'context_required': False
-    },
-    'L-516BC0EB': {  # Queues per routing profile per instance
-        'name': 'Queues per routing profile per instance',
-        'category': 'ROUTING_QUEUES',
-        'scope': 'INSTANCE',
-        'method': 'service_quotas',
-        'service': 'connect',
-        'default_limit': 50,
-        'context_required': False
-    },
-    'L-68BBE2E8': {  # Quick connects per instance
-        'name': 'Quick connects per instance',
-        'category': 'ROUTING_QUEUES',
-        'scope': 'INSTANCE',
-        'method': 'api_count',
-        'service': 'connect',
-        'api': 'list_quick_connects',
-        'default_limit': 100,
-        'context_required': False
-    },
-    'L-20CD02F7': {  # Hours of operation per instance
-        'name': 'Hours of operation per instance',
-        'category': 'ROUTING_QUEUES',
-        'scope': 'INSTANCE',
-        'method': 'api_count',
-        'service': 'connect',
-        'api': 'list_hours_of_operations',
-        'default_limit': 100,
-        'context_required': False
-    },
-    'L-D3E7BE26': {  # Routing profiles per instance
-        'name': 'Routing profiles per instance',
-        'category': 'ROUTING_QUEUES',
-        'scope': 'INSTANCE',
-        'method': 'api_count',
-        'service': 'connect',
-        'api': 'list_routing_profiles',
-        'default_limit': 100,
-        'context_required': False
-    },
-    'L-50375162': {  # Proficiencies per agent
-        'name': 'Proficiencies per agent',
-        'category': 'ROUTING_QUEUES',
-        'scope': 'INSTANCE',
-        'method': 'service_quotas',
-        'service': 'connect',
-        'default_limit': 20,
-        'context_required': False
-    },
-
-    # ===== REPORTING =====
-    'L-79564E52': {  # Reports per instance
-        'name': 'Reports per instance',
-        'category': 'REPORTING',
-        'scope': 'INSTANCE',
-        'method': 'service_quotas',
-        'service': 'connect',
-        'default_limit': 2000,
-        'context_required': False
-    },
-    'L-986AE5E3': {  # Scheduled reports per instance
-        'name': 'Scheduled reports per instance',
-        'category': 'REPORTING',
-        'scope': 'INSTANCE',
-        'method': 'service_quotas',
-        'service': 'connect',
-        'default_limit': 500,
-        'context_required': False
-    },
-    'L-DA88F710': {  # Maximum active recording sessions from external voice systems per instance
-        'name': 'Maximum active recording sessions from external voice systems per instance',
-        'category': 'REPORTING',
-        'scope': 'INSTANCE',
-        'method': 'service_quotas',
-        'service': 'connect',
-        'default_limit': 100,
-        'context_required': False
-    },
-
-    # ===== FORECASTING & CAPACITY =====
-    'L-64992552': {  # Forecast groups per instance
-        'name': 'Forecast groups per instance',
-        'category': 'FORECASTING_CAPACITY',
-        'scope': 'INSTANCE',
-        'method': 'service_quotas',
-        'service': 'connect',
-        'default_limit': 50,
-        'context_required': True
-    },
-    'L-59F577B1': {  # Schedules per instance
-        'name': 'Schedules per instance',
-        'category': 'FORECASTING_CAPACITY',
-        'scope': 'INSTANCE',
-        'method': 'service_quotas',
-        'service': 'connect',
-        'default_limit': 600,
-        'context_required': True
-    },
-    'L-71DDC3F5': {  # Agents per schedule
-        'name': 'Agents per schedule',
-        'category': 'FORECASTING_CAPACITY',
-        'scope': 'INSTANCE',
-        'method': 'service_quotas',
-        'service': 'connect',
-        'default_limit': 800,
-        'context_required': False
-    },
-    'L-FA43E8DF': {  # Agents per staffing group
-        'name': 'Agents per staffing group',
-        'category': 'FORECASTING_CAPACITY',
-        'scope': 'INSTANCE',
-        'method': 'service_quotas',
-        'service': 'connect',
-        'default_limit': 80,
-        'context_required': False
-    },
-    'L-241FA7AE': {  # Supervisors per staffing group
-        'name': 'Supervisors per staffing group',
-        'category': 'FORECASTING_CAPACITY',
-        'scope': 'INSTANCE',
-        'method': 'service_quotas',
-        'service': 'connect',
-        'default_limit': 40,
-        'context_required': False
-    },
-    'L-67F605FD': {  # Staffing groups per supervisor
-        'name': 'Staffing groups per supervisor',
-        'category': 'FORECASTING_CAPACITY',
-        'scope': 'INSTANCE',
-        'method': 'service_quotas',
-        'service': 'connect',
-        'default_limit': 45,
-        'context_required': False
-    },
-    'L-A3079FC2': {  # Staffing groups per instance
-        'name': 'Staffing groups per instance',
-        'category': 'FORECASTING_CAPACITY',
-        'scope': 'INSTANCE',
-        'method': 'service_quotas',
-        'service': 'connect',
-        'default_limit': 1300,
-        'context_required': False
-    },
-    'L-9FF2F6AB': {  # Staffing groups per Forecast group
-        'name': 'Staffing groups per Forecast group',
-        'category': 'FORECASTING_CAPACITY',
-        'scope': 'INSTANCE',
-        'method': 'service_quotas',
-        'service': 'connect',
-        'default_limit': 100,
-        'context_required': True
-    },
-    'L-E644BA2E': {  # Queues per forecast group
-        'name': 'Queues per forecast group',
-        'category': 'FORECASTING_CAPACITY',
-        'scope': 'INSTANCE',
-        'method': 'service_quotas',
-        'service': 'connect',
-        'default_limit': 200,
-        'context_required': False
-    },
-    'L-5CE2FEE8': {  # Capacity planning scenarios per instance
-        'name': 'Capacity planning scenarios per instance',
-        'category': 'FORECASTING_CAPACITY',
-        'scope': 'INSTANCE',
-        'method': 'service_quotas',
-        'service': 'connect',
-        'default_limit': 500,
-        'context_required': False
-    },
-    'L-62CF8E4F': {  # Capacity plans per instance
-        'name': 'Capacity plans per instance',
-        'category': 'FORECASTING_CAPACITY',
-        'scope': 'INSTANCE',
-        'method': 'service_quotas',
-        'service': 'connect',
-        'default_limit': 500,
-        'context_required': False
-    },
-    'L-CF8DBCAD': {  # Capacity plan user data uploads per instance
-        'name': 'Capacity plan user data uploads per instance',
-        'category': 'FORECASTING_CAPACITY',
-        'scope': 'INSTANCE',
-        'method': 'service_quotas',
-        'service': 'connect',
-        'default_limit': 500,
-        'context_required': False
-    },
-    'L-F9BE2186': {  # Capacity plan override uploads per instance
-        'name': 'Capacity plan override uploads per instance',
-        'category': 'FORECASTING_CAPACITY',
-        'scope': 'INSTANCE',
-        'method': 'service_quotas',
-        'service': 'connect',
-        'default_limit': 5000,
-        'context_required': False
-    },
-    'L-E09E7401': {  # Forecast override uploads per instance
-        'name': 'Forecast override uploads per instance',
-        'category': 'FORECASTING_CAPACITY',
-        'scope': 'INSTANCE',
-        'method': 'service_quotas',
-        'service': 'connect',
-        'default_limit': 500,
-        'context_required': False
-    },
-    'L-FBDF9277': {  # File size per upload of capacity plan user data
-        'name': 'File size per upload of capacity plan user data',
-        'category': 'FORECASTING_CAPACITY',
-        'scope': 'INSTANCE',
-        'method': 'service_quotas',
-        'service': 'connect',
-        'default_limit': 1000,
-        'context_required': False
-    },
-    'L-3A13A048': {  # File size per upload of capacity plan overrides
-        'name': 'File size per upload of capacity plan overrides',
-        'category': 'FORECASTING_CAPACITY',
-        'scope': 'INSTANCE',
-        'method': 'service_quotas',
-        'service': 'connect',
-        'default_limit': 250,
-        'context_required': False
-    },
-    'L-FA1E1138': {  # File size per upload of forecast overrides
-        'name': 'File size per upload of forecast overrides',
-        'category': 'FORECASTING_CAPACITY',
-        'scope': 'INSTANCE',
-        'method': 'service_quotas',
-        'service': 'connect',
-        'default_limit': 250,
-        'context_required': False
-    },
-    'L-FF826748': {  # File size per upload of historical actuals
-        'name': 'File size per upload of historical actuals',
-        'category': 'FORECASTING_CAPACITY',
-        'scope': 'INSTANCE',
-        'method': 'service_quotas',
-        'service': 'connect',
-        'default_limit': 1000,
-        'context_required': False
-    },
-    'L-77A750DD': {  # Historical actuals 15 or 30 minute interval aggregated file size limit
-        'name': 'Historical actuals 15 or 30 minute interval aggregated file size limit',
-        'category': 'FORECASTING_CAPACITY',
-        'scope': 'INSTANCE',
-        'method': 'service_quotas',
-        'service': 'connect',
-        'default_limit': 2000,
-        'context_required': False
-    },
-    'L-EE276EF1': {  # Historical actuals 15 or 30 minute interval file count
-        'name': 'Historical actuals 15 or 30 minute interval file count',
-        'category': 'FORECASTING_CAPACITY',
-        'scope': 'INSTANCE',
-        'method': 'service_quotas',
-        'service': 'connect',
-        'default_limit': 300,
-        'context_required': False
-    },
-    'L-95B6FF15': {  # Historical actuals daily interval aggregated file size limit
-        'name': 'Historical actuals daily interval aggregated file size limit',
-        'category': 'FORECASTING_CAPACITY',
-        'scope': 'INSTANCE',
-        'method': 'service_quotas',
-        'service': 'connect',
-        'default_limit': 2000,
-        'context_required': False
-    },
-    'L-97E6C50D': {  # Historical actuals daily interval file count
-        'name': 'Historical actuals daily interval file count',
-        'category': 'FORECASTING_CAPACITY',
-        'scope': 'INSTANCE',
-        'method': 'service_quotas',
-        'service': 'connect',
-        'default_limit': 300,
-        'context_required': False
-    },
-    'L-3233242F': {  # Concurrent uploads per instance
-        'name': 'Concurrent uploads per instance',
-        'category': 'FORECASTING_CAPACITY',
-        'scope': 'INSTANCE',
-        'method': 'service_quotas',
-        'service': 'connect',
-        'default_limit': 20,
-        'context_required': False
-    },
-    'L-8FAD6E1F': {  # Shift activities per instance
-        'name': 'Shift activities per instance',
-        'category': 'FORECASTING_CAPACITY',
-        'scope': 'INSTANCE',
-        'method': 'service_quotas',
-        'service': 'connect',
-        'default_limit': 500,
-        'context_required': False
-    },
-    'L-C174EC88': {  # Shift activities per shift profile
-        'name': 'Shift activities per shift profile',
-        'category': 'FORECASTING_CAPACITY',
-        'scope': 'INSTANCE',
-        'method': 'service_quotas',
-        'service': 'connect',
-        'default_limit': 10,
-        'context_required': False
-    },
-    'L-E423F15D': {  # Shift profiles per instance
-        'name': 'Shift profiles per instance',
-        'category': 'FORECASTING_CAPACITY',
-        'scope': 'INSTANCE',
-        'method': 'service_quotas',
-        'service': 'connect',
-        'default_limit': 2500,
-        'context_required': False
-    },
-    'L-F758F15D': {  # Shift rotation patterns per instance
-        'name': 'Shift rotation patterns per instance',
-        'category': 'FORECASTING_CAPACITY',
-        'scope': 'INSTANCE',
-        'method': 'service_quotas',
-        'service': 'connect',
-        'default_limit': 1300,
-        'context_required': False
-    },
-    'L-ECE54E5A': {  # Shift rotation pattern steps per shift profile
-        'name': 'Shift rotation pattern steps per shift profile',
-        'category': 'FORECASTING_CAPACITY',
-        'scope': 'INSTANCE',
-        'method': 'service_quotas',
-        'service': 'connect',
-        'default_limit': 1300,
-        'context_required': False
-    },
-
-    # ===== INTEGRATIONS =====
-    'L-FC6A5030': {  # Application integration associations per instance
-        'name': 'Application integration associations per instance',
-        'category': 'INTEGRATIONS',
-        'scope': 'INSTANCE',
-        'method': 'api_count',
-        'service': 'connect',
-        'api': 'list_integration_associations',
-        'default_limit': 50,
-        'context_required': False
-    },
-    'L-790F20B4': {  # Event integration associations per instance
-        'name': 'Event integration associations per instance',
-        'category': 'INTEGRATIONS',
-        'scope': 'INSTANCE',
-        'method': 'service_quotas',
-        'service': 'connect',
-        'default_limit': 50,
-        'context_required': False
-    },
-    'L-B93A6612': {  # Amazon Lex bots per instance
-        'name': 'Amazon Lex bots per instance',
-        'category': 'INTEGRATIONS',
-        'scope': 'INSTANCE',
-        'method': 'api_count',
-        'service': 'connect',
-        'api': 'list_bots',
-        'default_limit': 50,
-        'context_required': False
-    },
-    'L-CCEA7427': {  # Amazon Lex V2 bot aliases per instance
-        'name': 'Amazon Lex V2 bot aliases per instance',
-        'category': 'INTEGRATIONS',
-        'scope': 'INSTANCE',
-        'method': 'service_quotas',
-        'service': 'connect',
-        'default_limit': 100,
-        'context_required': False
-    },
-    'L-C7548958': {  # Amazon Pinpoint application integration associations per instance
-        'name': 'Amazon Pinpoint application integration associations per instance',
-        'category': 'INTEGRATIONS',
-        'scope': 'INSTANCE',
-        'method': 'service_quotas',
-        'service': 'connect',
-        'default_limit': 1,
-        'context_required': False
-    },
-    'L-0AA82C05': {  # Cases domain integration associations per instance
-        'name': 'Cases domain integration associations per instance',
-        'category': 'INTEGRATIONS',
-        'scope': 'INSTANCE',
-        'method': 'service_quotas',
-        'service': 'connect',
-        'default_limit': 1,
-        'context_required': False
-    },
-    'L-FFE16A0F': {  # Connect AI agent assistant integration associations per instance
-        'name': 'Connect AI agent assistant integration associations per instance',
-        'category': 'INTEGRATIONS',
-        'scope': 'INSTANCE',
-        'method': 'service_quotas',
-        'service': 'connect',
-        'default_limit': 1,
-        'context_required': False
-    },
-    'L-2D7CA70C': {  # Connect AI agent knowledge base integration associations per instance
-        'name': 'Connect AI agent knowledge base integration associations per instance',
-        'category': 'INTEGRATIONS',
-        'scope': 'INSTANCE',
-        'method': 'service_quotas',
-        'service': 'connect',
-        'default_limit': 10,
-        'context_required': False
-    },
-    'L-D55E707F': {  # Connect AI agent message templates integration associations per instance
-        'name': 'Connect AI agent message templates integration associations per instance',
-        'category': 'INTEGRATIONS',
-        'scope': 'INSTANCE',
-        'method': 'service_quotas',
-        'service': 'connect',
-        'default_limit': 1,
-        'context_required': False
-    },
-    'L-C8F22860': {  # Connect AI agent quick responses integration associations per instance
-        'name': 'Connect AI agent quick responses integration associations per instance',
-        'category': 'INTEGRATIONS',
-        'scope': 'INSTANCE',
-        'method': 'service_quotas',
-        'service': 'connect',
-        'default_limit': 1,
-        'context_required': False
-    },
-    'L-02421311': {  # File scanner integration associations per instance
-        'name': 'File scanner integration associations per instance',
-        'category': 'INTEGRATIONS',
-        'scope': 'INSTANCE',
-        'method': 'service_quotas',
-        'service': 'connect',
-        'default_limit': 1,
-        'context_required': False
-    },
-    'L-6402A996': {  # Workspaces per instance
-        'name': 'Workspaces per instance',
-        'category': 'INTEGRATIONS',
-        'scope': 'INSTANCE',
-        'method': 'api_count',
-        'service': 'connect',
-        'api': 'list_workspaces',
-        'default_limit': 20,
-        'context_required': False
-    },
-    
-    # ===== AMAZON LEX SERVICE =====
-    
-    # ===== CUSTOMER PROFILES SERVICE =====
-    
-    # ===== API RATE LIMITS =====
-    # Based on AWS Connect Service Limits documentation
-    # https://docs.aws.amazon.com/connect/latest/adminguide/amazon-connect-service-limits.html
-    
-    # === Critical Metrics APIs (Highest Priority) ===
-    'L-API-GMD': {  # GetMetricData API
-        'name': 'Rate of GetMetricData API requests',
-        'category': 'API_RATE_LIMITS',
-        'scope': 'ACCOUNT',
-        'method': 'cloudwatch_api',
-        'service': 'connect',
-        'operation': 'GetMetricData',
-        'namespace': 'AWS/Connect',
-        'default_limit': 5,
-        'burst_limit': 8,
-        'context_required': False
-    },
-    'L-API-GMDV2': {  # GetMetricDataV2 API
-        'name': 'Rate of GetMetricDataV2 API requests',
-        'category': 'API_RATE_LIMITS',
-        'scope': 'ACCOUNT',
-        'method': 'cloudwatch_api',
-        'service': 'connect',
-        'operation': 'GetMetricDataV2',
-        'namespace': 'AWS/Connect',
-        'default_limit': 10,
-        'burst_limit': 10,
-        'context_required': False
-    },
-    'L-API-GCMD': {  # GetCurrentMetricData API
-        'name': 'Rate of GetCurrentMetricData API requests',
-        'category': 'API_RATE_LIMITS',
-        'scope': 'ACCOUNT',
-        'method': 'cloudwatch_api',
-        'service': 'connect',
-        'operation': 'GetCurrentMetricData',
-        'namespace': 'AWS/Connect',
-        'default_limit': 5,
-        'burst_limit': 8,
-        'context_required': False
-    },
-    'L-API-GCUD': {  # GetCurrentUserData API
-        'name': 'Rate of GetCurrentUserData API requests',
-        'category': 'API_RATE_LIMITS',
-        'scope': 'ACCOUNT',
-        'method': 'cloudwatch_api',
-        'service': 'connect',
-        'operation': 'GetCurrentUserData',
-        'namespace': 'AWS/Connect',
-        'default_limit': 5,
-        'burst_limit': 8,
-        'context_required': False
-    },
-    # High-Volume Contact APIs
-    'L-API-SCC': {  # StartChatContact API
-        'name': 'Rate of StartChatContact API requests',
-        'category': 'API_RATE_LIMITS',
-        'scope': 'ACCOUNT',
-        'method': 'cloudwatch_api',
-        'service': 'connect',
-        'operation': 'StartChatContact',
-        'namespace': 'AWS/Connect',
-        'default_limit': 5,
-        'burst_limit': 8,
-        'context_required': False
-    },
-    'L-API-SCS': {  # StartContactStreaming API
-        'name': 'Rate of StartContactStreaming API requests',
-        'category': 'API_RATE_LIMITS',
-        'scope': 'ACCOUNT',
-        'method': 'cloudwatch_api',
-        'service': 'connect',
-        'operation': 'StartContactStreaming',
-        'namespace': 'AWS/Connect',
-        'default_limit': 5,
-        'burst_limit': 8,
-        'context_required': False
-    },
-    'L-API-SCHK': {  # SearchContacts API
-        'name': 'Rate of SearchContacts API requests',
-        'category': 'API_RATE_LIMITS',
-        'scope': 'ACCOUNT',
-        'method': 'cloudwatch_api',
-        'service': 'connect',
-        'operation': 'SearchContacts',
-        'namespace': 'AWS/Connect',
-        'default_limit': 0.5,
-        'burst_limit': 1,
-        'context_required': False
-    },
-    'L-5AF7EB96': {  # GetContactAttributes API (actual quota code from AWS)
-        'name': 'Rate of GetContactAttributes API requests',
-        'category': 'API_RATE_LIMITS',
-        'scope': 'ACCOUNT',
-        'method': 'cloudwatch_api',
-        'service': 'connect',
-        'operation': 'GetContactAttributes',
-        'namespace': 'AWS/Connect',
-        'default_limit': 10,
-        'burst_limit': 60,
-        'context_required': False
-    },
-    'L-API-UCA': {  # UpdateContactAttributes API
-        'name': 'Rate of UpdateContactAttributes API requests',
-        'category': 'API_RATE_LIMITS',
-        'scope': 'ACCOUNT',
-        'method': 'cloudwatch_api',
-        'service': 'connect',
-        'operation': 'UpdateContactAttributes',
-        'namespace': 'AWS/Connect',
-        'default_limit': 10,
-        'burst_limit': 15,
-        'context_required': False
-    },
-    'L-API-DC': {  # DescribeContact API
-        'name': 'Rate of DescribeContact API requests',
-        'category': 'API_RATE_LIMITS',
-        'scope': 'ACCOUNT',
-        'method': 'cloudwatch_api',
-        'service': 'connect',
-        'operation': 'DescribeContact',
-        'namespace': 'AWS/Connect',
-        'default_limit': 10,
-        'burst_limit': 15,
-        'context_required': False
-    },
-    'L-API-SC': {  # StopContact API
-        'name': 'Rate of StopContact API requests',
-        'category': 'API_RATE_LIMITS',
-        'scope': 'ACCOUNT',
-        'method': 'cloudwatch_api',
-        'service': 'connect',
-        'operation': 'StopContact',
-        'namespace': 'AWS/Connect',
-        'default_limit': 10,
-        'burst_limit': 15,
-        'context_required': False
-    },
-    'L-API-UC': {  # UpdateContact API
-        'name': 'Rate of UpdateContact API requests',
-        'category': 'API_RATE_LIMITS',
-        'scope': 'ACCOUNT',
-        'method': 'cloudwatch_api',
-        'service': 'connect',
-        'operation': 'UpdateContact',
-        'namespace': 'AWS/Connect',
-        'default_limit': 10,
-        'burst_limit': 15,
-        'context_required': False
-    },
-    'L-API-BPC': {  # BatchPutContact API
-        'name': 'Rate of BatchPutContact API requests',
-        'category': 'API_RATE_LIMITS',
-        'scope': 'ACCOUNT',
-        'method': 'cloudwatch_api',
-        'service': 'connect',
-        'operation': 'BatchPutContact',
-        'namespace': 'AWS/Connect',
-        'default_limit': 10,
-        'burst_limit': 15,
-        'context_required': False
-    },
-    'L-API-TC': {  # TagContact API
-        'name': 'Rate of TagContact API requests',
-        'category': 'API_RATE_LIMITS',
-        'scope': 'ACCOUNT',
-        'method': 'cloudwatch_api',
-        'service': 'connect',
-        'operation': 'TagContact',
-        'namespace': 'AWS/Connect',
-        'default_limit': 20,
-        'burst_limit': 25,
-        'context_required': False
-    },
-    'L-API-UTC': {  # UntagContact API
-        'name': 'Rate of UntagContact API requests',
-        'category': 'API_RATE_LIMITS',
-        'scope': 'ACCOUNT',
-        'method': 'cloudwatch_api',
-        'service': 'connect',
-        'operation': 'UntagContact',
-        'namespace': 'AWS/Connect',
-        'default_limit': 20,
-        'burst_limit': 25,
-        'context_required': False
-    },
-    'L-API-UCRD': {  # UpdateContactRoutingData API
-        'name': 'Rate of UpdateContactRoutingData API requests',
-        'category': 'API_RATE_LIMITS',
-        'scope': 'ACCOUNT',
-        'method': 'cloudwatch_api',
-        'service': 'connect',
-        'operation': 'UpdateContactRoutingData',
-        'namespace': 'AWS/Connect',
-        'default_limit': 20,
-        'burst_limit': 20,
-        'context_required': False
-    },
-    # Integration APIs
-    'L-API-SCIE': {  # SendChatIntegrationEvent API
-        'name': 'Rate of SendChatIntegrationEvent API requests',
-        'category': 'API_RATE_LIMITS',
-        'scope': 'ACCOUNT',
-        'method': 'cloudwatch_api',
-        'service': 'connect',
-        'operation': 'SendChatIntegrationEvent',
-        'namespace': 'AWS/Connect',
-        'default_limit': 17,
-        'burst_limit': 26,
-        'context_required': False
-    },
-    'L-API-LIA': {  # ListIntegrationAssociations API
-        'name': 'Rate of ListIntegrationAssociations API requests',
-        'category': 'API_RATE_LIMITS',
-        'scope': 'ACCOUNT',
-        'method': 'cloudwatch_api',
-        'service': 'connect',
-        'operation': 'ListIntegrationAssociations',
-        'namespace': 'AWS/Connect',
-        'default_limit': 25,
-        'burst_limit': 50,
-        'context_required': False
-    },
-    
-    # === Participant Service APIs (High Priority for Chat) ===
-    'L-API-CAU': {  # CompleteAttachmentUpload API
-        'name': 'Rate of CompleteAttachmentUpload API requests',
-        'category': 'API_RATE_LIMITS',
-        'scope': 'ACCOUNT',
-        'method': 'cloudwatch_api',
-        'service': 'connect-participant',
-        'operation': 'CompleteAttachmentUpload',
-        'namespace': 'AWS/ConnectParticipant',
-        'default_limit': 2,
-        'burst_limit': 5,
-        'context_required': False
-    },
-    'L-API-CPC': {  # CreateParticipantConnection API
-        'name': 'Rate of CreateParticipantConnection API requests',
-        'category': 'API_RATE_LIMITS',
-        'scope': 'ACCOUNT',
-        'method': 'cloudwatch_api',
-        'service': 'connect-participant',
-        'operation': 'CreateParticipantConnection',
-        'namespace': 'AWS/ConnectParticipant',
-        'default_limit': 6,
-        'burst_limit': 9,
-        'context_required': False
-    },
-    'L-API-DP': {  # DisconnectParticipant API
-        'name': 'Rate of DisconnectParticipant API requests',
-        'category': 'API_RATE_LIMITS',
-        'scope': 'ACCOUNT',
-        'method': 'cloudwatch_api',
-        'service': 'connect-participant',
-        'operation': 'DisconnectParticipant',
-        'namespace': 'AWS/ConnectParticipant',
-        'default_limit': 3,
-        'burst_limit': 5,
-        'context_required': False
-    },
-    'L-API-GA': {  # GetAttachment API
-        'name': 'Rate of GetAttachment API requests',
-        'category': 'API_RATE_LIMITS',
-        'scope': 'ACCOUNT',
-        'method': 'cloudwatch_api',
-        'service': 'connect-participant',
-        'operation': 'GetAttachment',
-        'namespace': 'AWS/ConnectParticipant',
-        'default_limit': 8,
-        'burst_limit': 12,
-        'context_required': False
-    },
-    'L-API-GT': {  # GetTranscript API
-        'name': 'Rate of GetTranscript API requests',
-        'category': 'API_RATE_LIMITS',
-        'scope': 'ACCOUNT',
-        'method': 'cloudwatch_api',
-        'service': 'connect-participant',
-        'operation': 'GetTranscript',
-        'namespace': 'AWS/ConnectParticipant',
-        'default_limit': 8,
-        'burst_limit': 12,
-        'context_required': False
-    },
-    'L-API-SE': {  # SendEvent API
-        'name': 'Rate of SendEvent API requests',
-        'category': 'API_RATE_LIMITS',
-        'scope': 'ACCOUNT',
-        'method': 'cloudwatch_api',
-        'service': 'connect-participant',
-        'operation': 'SendEvent',
-        'namespace': 'AWS/ConnectParticipant',
-        'default_limit': 10,
-        'burst_limit': 15,
-        'context_required': False
-    },
-    'L-API-SM': {  # SendMessage API
-        'name': 'Rate of SendMessage API requests',
-        'category': 'API_RATE_LIMITS',
-        'scope': 'ACCOUNT',
-        'method': 'cloudwatch_api',
-        'service': 'connect-participant',
-        'operation': 'SendMessage',
-        'namespace': 'AWS/ConnectParticipant',
-        'default_limit': 10,
-        'burst_limit': 15,
-        'context_required': False
-    },
-    'L-API-SAU': {  # StartAttachmentUpload API
-        'name': 'Rate of StartAttachmentUpload API requests',
-        'category': 'API_RATE_LIMITS',
-        'scope': 'ACCOUNT',
-        'method': 'cloudwatch_api',
-        'service': 'connect-participant',
-        'operation': 'StartAttachmentUpload',
-        'namespace': 'AWS/ConnectParticipant',
-        'default_limit': 2,
-        'burst_limit': 5,
-        'context_required': False
-    },
-    
-    # === Cases API (Medium Priority) ===
-    'L-API-CASES-CC': {  # CreateCase API
-        'name': 'Rate of CreateCase API requests',
-        'category': 'API_RATE_LIMITS',
-        'scope': 'ACCOUNT',
-        'method': 'cloudwatch_api',
-        'service': 'connectcases',
-        'operation': 'CreateCase',
-        'namespace': 'AWS/ConnectCases',
-        'default_limit': 2,
-        'burst_limit': 10,
-        'context_required': False
-    },
-    'L-API-CASES-SC': {  # SearchCases API
-        'name': 'Rate of SearchCases API requests',
-        'category': 'API_RATE_LIMITS',
-        'scope': 'ACCOUNT',
-        'method': 'cloudwatch_api',
-        'service': 'connectcases',
-        'operation': 'SearchCases',
-        'namespace': 'AWS/ConnectCases',
-        'default_limit': 2,
-        'burst_limit': 10,
-        'context_required': False
-    },
-    'L-API-CASES-GC': {  # GetCase API
-        'name': 'Rate of GetCase API requests',
-        'category': 'API_RATE_LIMITS',
-        'scope': 'ACCOUNT',
-        'method': 'cloudwatch_api',
-        'service': 'connectcases',
-        'operation': 'GetCase',
-        'namespace': 'AWS/ConnectCases',
-        'default_limit': 4,
-        'burst_limit': 10,
-        'context_required': False
-    },
-    'L-API-CASES-UC': {  # UpdateCase API
-        'name': 'Rate of UpdateCase API requests',
-        'category': 'API_RATE_LIMITS',
-        'scope': 'ACCOUNT',
-        'method': 'cloudwatch_api',
-        'service': 'connectcases',
-        'operation': 'UpdateCase',
-        'namespace': 'AWS/ConnectCases',
-        'default_limit': 2,
-        'burst_limit': 2,
-        'context_required': False
-    },
-    'L-API-CASES-LCFC': {  # ListCasesForContact API
-        'name': 'Rate of ListCasesForContact API requests',
-        'category': 'API_RATE_LIMITS',
-        'scope': 'ACCOUNT',
-        'method': 'cloudwatch_api',
-        'service': 'connectcases',
-        'operation': 'ListCasesForContact',
-        'namespace': 'AWS/ConnectCases',
-        'default_limit': 2,
-        'burst_limit': 2,
-        'context_required': False
-    },
-    
-    # === Contact Lens API ===
-    'L-API-CL-LRCAS': {  # ListRealtimeContactAnalysisSegments API
-        'name': 'Rate of ListRealtimeContactAnalysisSegments API requests',
-        'category': 'API_RATE_LIMITS',
-        'scope': 'ACCOUNT',
-        'method': 'cloudwatch_api',
-        'service': 'connect',
-        'operation': 'ListRealtimeContactAnalysisSegments',
-        'namespace': 'AWS/Connect/ContactLens',
-        'default_limit': 1,
-        'burst_limit': 2,
-        'context_required': False
-    },
-    'L-API-CL-LRCASV2': {  # ListRealtimeContactAnalysisSegmentsV2 API
-        'name': 'Rate of ListRealtimeContactAnalysisSegmentsV2 API requests',
-        'category': 'API_RATE_LIMITS',
-        'scope': 'ACCOUNT',
-        'method': 'cloudwatch_api',
-        'service': 'connect',
-        'operation': 'ListRealtimeContactAnalysisSegmentsV2',
-        'namespace': 'AWS/Connect/ContactLens',
-        'default_limit': 2,
-        'burst_limit': 5,
-        'context_required': False
-    },
-    
-    # === Additional Connect Core APIs ===
-    'L-API-CP': {  # CreateParticipant API
-        'name': 'Rate of CreateParticipant API requests',
-        'category': 'API_RATE_LIMITS',
-        'scope': 'ACCOUNT',
-        'method': 'cloudwatch_api',
-        'service': 'connect',
-        'operation': 'CreateParticipant',
-        'namespace': 'AWS/Connect',
-        'default_limit': 5,
-        'burst_limit': 8,
-        'context_required': False
-    },
-    'L-API-CPCA': {  # CreatePersistentContactAssociation API
-        'name': 'Rate of CreatePersistentContactAssociation API requests',
-        'category': 'API_RATE_LIMITS',
-        'scope': 'ACCOUNT',
-        'method': 'cloudwatch_api',
-        'service': 'connect',
-        'operation': 'CreatePersistentContactAssociation',
-        'namespace': 'AWS/Connect',
-        'default_limit': 5,
-        'burst_limit': 8,
-        'context_required': False
-    },
-    'L-API-UPRC': {  # UpdateParticipantRoleConfig API
-        'name': 'Rate of UpdateParticipantRoleConfig API requests',
-        'category': 'API_RATE_LIMITS',
-        'scope': 'ACCOUNT',
-        'method': 'cloudwatch_api',
-        'service': 'connect',
-        'operation': 'UpdateParticipantRoleConfig',
-        'namespace': 'AWS/Connect',
-        'default_limit': 5,
-        'burst_limit': 8,
-        'context_required': False
-    },
-    'L-API-SCCS': {  # StopContactStreaming API
-        'name': 'Rate of StopContactStreaming API requests',
-        'category': 'API_RATE_LIMITS',
-        'scope': 'ACCOUNT',
-        'method': 'cloudwatch_api',
-        'service': 'connect',
-        'operation': 'StopContactStreaming',
-        'namespace': 'AWS/Connect',
-        'default_limit': 5,
-        'burst_limit': 8,
-        'context_required': False
-    },
-    'L-API-SIE': {  # SendIntegrationEvent API
-        'name': 'Rate of SendIntegrationEvent API requests',
-        'category': 'API_RATE_LIMITS',
-        'scope': 'ACCOUNT',
-        'method': 'cloudwatch_api',
-        'service': 'connect',
-        'operation': 'SendIntegrationEvent',
-        'namespace': 'AWS/Connect',
-        'default_limit': 10,
-        'burst_limit': 15,
-        'context_required': False
-    },
-    'L-API-CIA': {  # CreateIntegrationAssociation API
-        'name': 'Rate of CreateIntegrationAssociation API requests',
-        'category': 'API_RATE_LIMITS',
-        'scope': 'ACCOUNT',
-        'method': 'cloudwatch_api',
-        'service': 'connect',
-        'operation': 'CreateIntegrationAssociation',
-        'namespace': 'AWS/Connect',
-        'default_limit': 2,
-        'burst_limit': 5,
-        'context_required': False
-    },
-    'L-API-DIA': {  # DeleteIntegrationAssociation API
-        'name': 'Rate of DeleteIntegrationAssociation API requests',
-        'category': 'API_RATE_LIMITS',
-        'scope': 'ACCOUNT',
-        'method': 'cloudwatch_api',
-        'service': 'connect',
-        'operation': 'DeleteIntegrationAssociation',
-        'namespace': 'AWS/Connect',
-        'default_limit': 2,
-        'burst_limit': 5,
-        'context_required': False
-    },
-    # Email Quotas (NEW)
-    'L-EMAIL-ADDR': {  # Email addresses per instance
-        'name': 'Email addresses per instance',
-        'category': 'CONTACT_HANDLING',
-        'scope': 'INSTANCE',
-        'method': 'api_count',
-        'service': 'connect',
-        'api': 'list_email_addresses',
-        'default_limit': 100,
-        'context_required': True
-    },
-    'L-EMAIL-CONCURRENT': {  # Concurrent active emails
-        'name': 'Concurrent active emails per instance',
-        'category': 'CONTACT_HANDLING',
-        'scope': 'INSTANCE',
-        'method': 'cloudwatch',
-        'service': 'connect',
-        'metric_name': 'ConcurrentActiveEmails',
-        'namespace': 'AWS/Connect',
-        'statistic': 'Maximum',
-        'default_limit': 1000,
-        'context_required': True
-    },
-    # Additional Contact Lens Quotas
-    'L-CL-PCAJ': {  # Post-call analytics jobs
-        'name': 'Concurrent post-call analytics jobs',
-        'category': 'CONTACT_LENS',
-        'scope': 'ACCOUNT',
-        'method': 'service_quotas',
-        'service': 'connect',
-        'default_limit': 200,
-        'context_required': False
-    },
-    'L-CL-CAJ': {  # Chat analytics jobs
-        'name': 'Concurrent chat analytics jobs',
-        'category': 'CONTACT_LENS',
-        'scope': 'ACCOUNT',
-        'method': 'service_quotas',
-        'service': 'connect',
-        'default_limit': 200,
-        'context_required': False
-    },
-    'L-CL-AIAJ': {  # Automated interaction analytics jobs
-        'name': 'Concurrent automated interaction analytics jobs',
-        'category': 'CONTACT_LENS',
-        'scope': 'ACCOUNT',
-        'method': 'service_quotas',
-        'service': 'connect',
-        'default_limit': 20,
-        'context_required': False
-    },
-    'L-CL-PCSJ': {  # Post-contact summary jobs
-        'name': 'Concurrent post-contact agent conversation summary jobs',
-        'category': 'CONTACT_LENS',
-        'scope': 'ACCOUNT',
-        'method': 'service_quotas',
-        'service': 'connect',
-        'default_limit': 10,
-        'context_required': False
-    },
-    'L-CL-ACSJ': {  # After-call summary jobs
-        'name': 'Concurrent after-call agent conversation summary jobs',
-        'category': 'CONTACT_LENS',
-        'scope': 'ACCOUNT',
-        'method': 'service_quotas',
-        'service': 'connect',
-        'default_limit': 2,
-        'context_required': False
-    }
 }
 
 # Maintain backward compatibility with existing code
@@ -2081,7 +865,7 @@ class ConnectQuotaMonitor:
         """
         # Check cache first (unless force refresh)
         if not force_refresh and hasattr(self, '_cached_instances') and hasattr(self, '_cache_timestamp'):
-            cache_age = datetime.utcnow() - self._cache_timestamp
+            cache_age = datetime.now(timezone.utc) - self._cache_timestamp
             if cache_age.total_seconds() < 300:  # 5 minute cache
                 logger.debug(f"Using cached instances ({len(self._cached_instances)} instances)")
                 return self._cached_instances
@@ -2156,7 +940,7 @@ class ConnectQuotaMonitor:
             
             # Cache the results
             self._cached_instances = valid_instances
-            self._cache_timestamp = datetime.utcnow()
+            self._cache_timestamp = datetime.now(timezone.utc)
             
             logger.info(f"Successfully discovered {len(valid_instances)} Connect instances")
             
@@ -2217,7 +1001,7 @@ class ConnectQuotaMonitor:
             
             # Cache the results
             self._cached_instances = enhanced_instances
-            self._cache_timestamp = datetime.utcnow()
+            self._cache_timestamp = datetime.now(timezone.utc)
             
             logger.info(f"Successfully discovered {len(enhanced_instances)} Connect instances (basic mode)")
             return enhanced_instances
@@ -2245,7 +1029,7 @@ class ConnectQuotaMonitor:
                 # Add computed fields
                 'Region': self.region,
                 'AccountId': self._get_account_id(),
-                'DiscoveredAt': datetime.utcnow().isoformat(),
+                'DiscoveredAt': datetime.now(timezone.utc).isoformat(),
                 'IsActive': instance.get('InstanceStatus') == 'ACTIVE'
             }
             
@@ -2893,7 +1677,7 @@ class ConnectQuotaMonitor:
             'account_id': self._get_account_id(),
             'storage_backends': [],
             'client_status': self.client_manager.get_initialization_summary(),
-            'last_updated': datetime.utcnow().isoformat()
+            'last_updated': datetime.now(timezone.utc).isoformat()
         }
         
         # Determine active storage backends
@@ -3244,7 +2028,7 @@ class ConnectQuotaMonitor:
             'quota_limit': quota_limit,  # Applied quota (may differ from default)
             'utilization_percentage': round(utilization_percentage, 2),
             'instance_id': instance_id,
-            'timestamp': datetime.utcnow().isoformat(),
+            'timestamp': datetime.now(timezone.utc).isoformat(),
             'method': method,
             'service': service
         }
@@ -3358,7 +2142,7 @@ class ConnectQuotaMonitor:
             })
         
         # Get metric data from CloudWatch
-        end_time = datetime.utcnow()
+        end_time = datetime.now(timezone.utc)
         start_time = end_time - timedelta(minutes=15)  # Look back 15 minutes
         
         try:
@@ -3445,7 +2229,7 @@ class ConnectQuotaMonitor:
             })
         
         # Get API call count from CloudWatch over last 5 minutes
-        end_time = datetime.utcnow()
+        end_time = datetime.now(timezone.utc)
         start_time = end_time - timedelta(minutes=5)
         
         try:
@@ -3544,7 +2328,7 @@ class ConnectQuotaMonitor:
         # Check cache first (5 minute TTL)
         if cache_key in self._quota_limit_cache:
             cached_value, cache_time = self._quota_limit_cache[cache_key]
-            if (datetime.utcnow() - cache_time).total_seconds() < 300:
+            if (datetime.now(timezone.utc) - cache_time).total_seconds() < 300:
                 logger.debug(f"Using cached quota limit for {quota_code}: {cached_value}")
                 return cached_value
         
@@ -3573,12 +2357,12 @@ class ConnectQuotaMonitor:
                     logger.debug(f"Retrieved applied quota for {quota_code}: {applied_float}")
                     
                     # Cache the result
-                    self._quota_limit_cache[cache_key] = (applied_float, datetime.utcnow())
+                    self._quota_limit_cache[cache_key] = (applied_float, datetime.now(timezone.utc))
                     return applied_float
             
             # If we can't get the applied value, cache None and return None to use default
             logger.debug(f"Could not retrieve applied quota for {quota_code}, will use default")
-            self._quota_limit_cache[cache_key] = (None, datetime.utcnow())
+            self._quota_limit_cache[cache_key] = (None, datetime.now(timezone.utc))
             return None
             
         except ClientError as e:
@@ -3589,13 +2373,13 @@ class ConnectQuotaMonitor:
             if error_code == 'NoSuchResourceException':
                 logger.debug(f"Quota {quota_code} not found in Service Quotas API (expected for some quotas)")
                 # Cache this negative result to avoid repeated API calls
-                self._quota_limit_cache[cache_key] = (None, datetime.utcnow())
+                self._quota_limit_cache[cache_key] = (None, datetime.now(timezone.utc))
                 return None
             
             # ResourceNotFoundException - similar to above
             elif error_code == 'ResourceNotFoundException':
                 logger.debug(f"Quota {quota_code} resource not found in Service Quotas API")
-                self._quota_limit_cache[cache_key] = (None, datetime.utcnow())
+                self._quota_limit_cache[cache_key] = (None, datetime.now(timezone.utc))
                 return None
             
             # AccessDeniedException - permission issue
@@ -4041,7 +2825,7 @@ class FlexibleStorageEngine:
     
     def _prepare_instance_metrics(self, instance_id, instance_alias, metrics_data):
         """Prepare instance metrics data for storage."""
-        timestamp = datetime.utcnow()
+        timestamp = datetime.now(timezone.utc)
         
         return {
             'record_type': 'instance_metrics',
@@ -4058,7 +2842,7 @@ class FlexibleStorageEngine:
     
     def _prepare_account_metrics(self, metrics_data):
         """Prepare account-level metrics data for storage."""
-        timestamp = datetime.utcnow()
+        timestamp = datetime.now(timezone.utc)
         
         return {
             'record_type': 'account_metrics',
@@ -4073,7 +2857,7 @@ class FlexibleStorageEngine:
     
     def _prepare_consolidated_report(self, monitoring_results, alert_results):
         """Prepare consolidated monitoring report for storage."""
-        timestamp = datetime.utcnow()
+        timestamp = datetime.now(timezone.utc)
         
         return {
             'record_type': 'consolidated_report',
@@ -4504,7 +3288,7 @@ class AlertConsolidationEngine:
             message_data = {
                 'alert_type': 'CONNECT_ACCOUNT_QUOTA_VIOLATIONS',
                 'severity': self._determine_severity(violations),
-                'timestamp': datetime.utcnow().isoformat(),
+                'timestamp': datetime.now(timezone.utc).isoformat(),
                 'execution_id': self.execution_id,
                 'scope': 'ACCOUNT',
                 'violations_count': len(violations),
@@ -4537,7 +3321,7 @@ class AlertConsolidationEngine:
             message_data = {
                 'alert_type': 'CONNECT_INSTANCE_QUOTA_VIOLATIONS',
                 'severity': self._determine_severity(violations),
-                'timestamp': datetime.utcnow().isoformat(),
+                'timestamp': datetime.now(timezone.utc).isoformat(),
                 'execution_id': self.execution_id,
                 'scope': 'INSTANCE',
                 'instance_id': instance_id,
@@ -4572,7 +3356,7 @@ class AlertConsolidationEngine:
         message_lines = [
             "🚨 AMAZON CONNECT ACCOUNT QUOTA ALERT 🚨",
             "",
-            f"Alert Time: {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S UTC')}",
+            f"Alert Time: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')}",
             f"Execution ID: {self.execution_id}",
             f"Threshold: {self.threshold_percentage}%",
             "",
@@ -4616,7 +3400,7 @@ class AlertConsolidationEngine:
         message_lines = [
             "🚨 AMAZON CONNECT INSTANCE QUOTA ALERT 🚨",
             "",
-            f"Alert Time: {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S UTC')}",
+            f"Alert Time: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')}",
             f"Execution ID: {self.execution_id}",
             f"Threshold: {self.threshold_percentage}%",
             "",
@@ -4840,8 +3624,8 @@ def save_report_to_s3(s3_client, bucket, report_data):
     """Save report data to S3 bucket."""
     try:
         # Generate keys for the report
-        timestamp = datetime.utcnow().strftime('%Y%m%d_%H%M%S')
-        date_prefix = datetime.utcnow().strftime('%Y/%m/%d')
+        timestamp = datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')
+        date_prefix = datetime.now(timezone.utc).strftime('%Y/%m/%d')
         report_key = f"connect-reports/{date_prefix}/connect_quota_report_{timestamp}.json"
         latest_key = "connect-reports/latest/connect_quota_report.json"
         
@@ -4875,7 +3659,7 @@ def save_report_to_dynamodb(dynamodb_client, table_name, report_data):
     """Save report summary to DynamoDB table."""
     try:
         # Create a summary item for this execution
-        timestamp = datetime.utcnow().isoformat()
+        timestamp = datetime.now(timezone.utc).isoformat()
         
         # Basic attributes
         item = {
@@ -4918,7 +3702,7 @@ def save_report_to_dynamodb(dynamodb_client, table_name, report_data):
         logger.error(f"Error saving report to DynamoDB: {sanitize_log(str(e))}")
         return False
 
-def main():
+def cli_main():
     """Main function to run the quota monitor."""
     try:
         # Log execution start with unique ID for traceability
@@ -4987,7 +3771,7 @@ def main():
         # Add metadata to results for reporting
         report_data = {
             'execution_id': EXECUTION_ID,
-            'timestamp': datetime.utcnow().isoformat(),
+            'timestamp': datetime.now(timezone.utc).isoformat(),
             'region': region or 'default',
             'threshold_percentage': threshold,
             'monitoring_results': results,
@@ -5011,7 +3795,7 @@ def main():
             os.makedirs('reports', exist_ok=True)
             
             # Save results to file with timestamp for historical tracking
-            timestamp = datetime.utcnow().strftime('%Y%m%d_%H%M%S')
+            timestamp = datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')
             report_file = f'reports/connect_quota_report_{timestamp}.json'
             
             with open(report_file, 'w') as f:
@@ -5045,7 +3829,7 @@ def main():
         sys.exit(1)
 
 if __name__ == "__main__":
-    main()
+    cli_main()
 
 def main(event=None, context=None):
     """

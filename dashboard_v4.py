@@ -406,13 +406,17 @@ def _calculate_line_capacity_pct(
         return 50  # Default if no quota data
 
     # Use the system-wide highest utilization as the line's constraint
+    # Cap individual API utilization at 100% to prevent stale/anomalous data
+    # from making ALL lines show as maxed out
     max_pct = 0
     for api_name, usage in system_api_usage.items():
         if usage["limit"] > 0:
-            pct = usage["total"] / usage["limit"] * 100
+            pct = min(usage["total"] / usage["limit"] * 100, 100)
             max_pct = max(max_pct, pct)
 
-    return min(int(max_pct), 99)
+    if max_pct == 0:
+        return 0
+    return min(int(max_pct), 95)
 
 
 def _calculate_weekly(metrics: dict[str, Any], daily_volume: int) -> list[int]:

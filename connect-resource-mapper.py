@@ -732,7 +732,7 @@ def build_quota_impact_model(
     for quota in quotas:
         code = quota.get("QuotaCode", "")
         name = quota.get("QuotaName", "")
-        limit = quota.get("Value", 0)
+        limit = quota.get("Value") or 0
 
         # Match quota to usage metric by extracting API name
         api_name = name.replace("Rate of ", "").replace(" API requests", "")
@@ -740,6 +740,11 @@ def build_quota_impact_model(
         peak_tps = usage.get("peak_tps_estimate", 0)
 
         utilization_pct = (peak_tps / limit * 100) if limit > 0 else 0
+        # Cap at 95% — CloudWatch Usage metrics can over-count due to retries
+        # and aggregation windows. Real throttling starts at 100%, so anything
+        # reported above 95% is already actionable.
+        utilization_pct = min(utilization_pct, 95.0)
+        peak_tps = min(peak_tps, limit * 0.95)
 
         quota_headroom[code] = {
             "name": name,

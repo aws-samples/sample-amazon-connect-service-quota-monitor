@@ -38,9 +38,9 @@ Parameters:
 
 Globals:
   Function:
-    Timeout: 30
+    Timeout: 300
     Runtime: python3.12
-    MemorySize: 256
+    MemorySize: 512
     Architectures:
       - arm64
 
@@ -111,10 +111,12 @@ Resources:
     Type: AWS::Serverless::Api
     Properties:
       StageName: prod
+      Auth:
+        ApiKeyRequired: true
       Cors:
         AllowMethods: "'GET, OPTIONS'"
-        AllowHeaders: "'Content-Type'"
-        AllowOrigin: "'*'"
+        AllowHeaders: "'Content-Type,X-Api-Key'"
+        AllowOrigin: "'https://*.cloudfront.net'"
 
 Conditions:
   HasS3Config: !Not [!Equals [!Ref LineConfigS3Bucket, '']]

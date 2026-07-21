@@ -460,6 +460,12 @@ Resources:
           PolicyDocument:
             Version: '2012-10-17'
             Statement:
+              # IAM Scoping Note:
+              # All statements below use Resource: '*' because they are discovery/list APIs
+              # that require access to ALL resources in the account (you can't know instance
+              # ARNs before calling ListInstances). All actions are read-only (List*/Describe*/Get*).
+              # SNS:Publish is scoped to the specific AlertSNSTopic ARN.
+
               # Core Amazon Connect permissions
               - Sid: ConnectCorePermissions
                 Effect: Allow

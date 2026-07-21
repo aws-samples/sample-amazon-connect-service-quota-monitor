@@ -258,9 +258,7 @@ def _write_latest(bucket: str, snapshot: dict[str, Any]) -> None:
     with all tabs (All APIs, Per Flow, Quotas, Lambdas), sortable tables,
     and search. The snapshot data is merged into the model for current TPS.
     """
-    import sys
     import tempfile
-    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
     s3 = boto3.client("s3")
     instance_id = os.environ.get("CONNECT_INSTANCE_ID", "")
@@ -280,11 +278,10 @@ def _write_latest(bucket: str, snapshot: dict[str, Any]) -> None:
 
     # Generate the full API report HTML
     try:
-        import importlib
-        mapper = importlib.import_module("connect-resource-mapper")
+        from mapper_bridge import collect_all
         from consolidated_report import generate_consolidated_report_string
 
-        resource_map, model = mapper.collect_all(instance_id, region)
+        resource_map, model = collect_all(instance_id, region)
         html = generate_consolidated_report_string(resource_map, model)
 
         s3.put_object(

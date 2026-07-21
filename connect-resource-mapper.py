@@ -732,7 +732,7 @@ def build_quota_impact_model(
     for quota in quotas:
         code = quota.get("QuotaCode", "")
         name = quota.get("QuotaName", "")
-        limit = quota.get("Value", 0)
+        limit = quota.get("Value") or 0
 
         # Match quota to usage metric by extracting API name
         api_name = name.replace("Rate of ", "").replace(" API requests", "")

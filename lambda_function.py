@@ -2081,7 +2081,7 @@ class ConnectQuotaMonitor:
         """
         # Check cache first (unless force refresh)
         if not force_refresh and hasattr(self, '_cached_instances') and hasattr(self, '_cache_timestamp'):
-            cache_age = datetime.utcnow() - self._cache_timestamp
+            cache_age = datetime.now(timezone.utc) - self._cache_timestamp
             if cache_age.total_seconds() < 300:  # 5 minute cache
                 logger.debug(f"Using cached instances ({len(self._cached_instances)} instances)")
                 return self._cached_instances
@@ -2156,7 +2156,7 @@ class ConnectQuotaMonitor:
             
             # Cache the results
             self._cached_instances = valid_instances
-            self._cache_timestamp = datetime.utcnow()
+            self._cache_timestamp = datetime.now(timezone.utc)
             
             logger.info(f"Successfully discovered {len(valid_instances)} Connect instances")
             
@@ -2217,7 +2217,7 @@ class ConnectQuotaMonitor:
             
             # Cache the results
             self._cached_instances = enhanced_instances
-            self._cache_timestamp = datetime.utcnow()
+            self._cache_timestamp = datetime.now(timezone.utc)
             
             logger.info(f"Successfully discovered {len(enhanced_instances)} Connect instances (basic mode)")
             return enhanced_instances
@@ -2245,7 +2245,7 @@ class ConnectQuotaMonitor:
                 # Add computed fields
                 'Region': self.region,
                 'AccountId': self._get_account_id(),
-                'DiscoveredAt': datetime.utcnow().isoformat(),
+                'DiscoveredAt': datetime.now(timezone.utc).isoformat(),
                 'IsActive': instance.get('InstanceStatus') == 'ACTIVE'
             }
             
@@ -2893,7 +2893,7 @@ class ConnectQuotaMonitor:
             'account_id': self._get_account_id(),
             'storage_backends': [],
             'client_status': self.client_manager.get_initialization_summary(),
-            'last_updated': datetime.utcnow().isoformat()
+            'last_updated': datetime.now(timezone.utc).isoformat()
         }
         
         # Determine active storage backends
@@ -3244,7 +3244,7 @@ class ConnectQuotaMonitor:
             'quota_limit': quota_limit,  # Applied quota (may differ from default)
             'utilization_percentage': round(utilization_percentage, 2),
             'instance_id': instance_id,
-            'timestamp': datetime.utcnow().isoformat(),
+            'timestamp': datetime.now(timezone.utc).isoformat(),
             'method': method,
             'service': service
         }
@@ -3358,7 +3358,7 @@ class ConnectQuotaMonitor:
             })
         
         # Get metric data from CloudWatch
-        end_time = datetime.utcnow()
+        end_time = datetime.now(timezone.utc)
         start_time = end_time - timedelta(minutes=15)  # Look back 15 minutes
         
         try:
@@ -3445,7 +3445,7 @@ class ConnectQuotaMonitor:
             })
         
         # Get API call count from CloudWatch over last 5 minutes
-        end_time = datetime.utcnow()
+        end_time = datetime.now(timezone.utc)
         start_time = end_time - timedelta(minutes=5)
         
         try:
@@ -3544,7 +3544,7 @@ class ConnectQuotaMonitor:
         # Check cache first (5 minute TTL)
         if cache_key in self._quota_limit_cache:
             cached_value, cache_time = self._quota_limit_cache[cache_key]
-            if (datetime.utcnow() - cache_time).total_seconds() < 300:
+            if (datetime.now(timezone.utc) - cache_time).total_seconds() < 300:
                 logger.debug(f"Using cached quota limit for {quota_code}: {cached_value}")
                 return cached_value
         
@@ -3573,12 +3573,12 @@ class ConnectQuotaMonitor:
                     logger.debug(f"Retrieved applied quota for {quota_code}: {applied_float}")
                     
                     # Cache the result
-                    self._quota_limit_cache[cache_key] = (applied_float, datetime.utcnow())
+                    self._quota_limit_cache[cache_key] = (applied_float, datetime.now(timezone.utc))
                     return applied_float
             
             # If we can't get the applied value, cache None and return None to use default
             logger.debug(f"Could not retrieve applied quota for {quota_code}, will use default")
-            self._quota_limit_cache[cache_key] = (None, datetime.utcnow())
+            self._quota_limit_cache[cache_key] = (None, datetime.now(timezone.utc))
             return None
             
         except ClientError as e:
@@ -3589,13 +3589,13 @@ class ConnectQuotaMonitor:
             if error_code == 'NoSuchResourceException':
                 logger.debug(f"Quota {quota_code} not found in Service Quotas API (expected for some quotas)")
                 # Cache this negative result to avoid repeated API calls
-                self._quota_limit_cache[cache_key] = (None, datetime.utcnow())
+                self._quota_limit_cache[cache_key] = (None, datetime.now(timezone.utc))
                 return None
             
             # ResourceNotFoundException - similar to above
             elif error_code == 'ResourceNotFoundException':
                 logger.debug(f"Quota {quota_code} resource not found in Service Quotas API")
-                self._quota_limit_cache[cache_key] = (None, datetime.utcnow())
+                self._quota_limit_cache[cache_key] = (None, datetime.now(timezone.utc))
                 return None
             
             # AccessDeniedException - permission issue
@@ -4041,7 +4041,7 @@ class FlexibleStorageEngine:
     
     def _prepare_instance_metrics(self, instance_id, instance_alias, metrics_data):
         """Prepare instance metrics data for storage."""
-        timestamp = datetime.utcnow()
+        timestamp = datetime.now(timezone.utc)
         
         return {
             'record_type': 'instance_metrics',
@@ -4058,7 +4058,7 @@ class FlexibleStorageEngine:
     
     def _prepare_account_metrics(self, metrics_data):
         """Prepare account-level metrics data for storage."""
-        timestamp = datetime.utcnow()
+        timestamp = datetime.now(timezone.utc)
         
         return {
             'record_type': 'account_metrics',
@@ -4073,7 +4073,7 @@ class FlexibleStorageEngine:
     
     def _prepare_consolidated_report(self, monitoring_results, alert_results):
         """Prepare consolidated monitoring report for storage."""
-        timestamp = datetime.utcnow()
+        timestamp = datetime.now(timezone.utc)
         
         return {
             'record_type': 'consolidated_report',
@@ -4504,7 +4504,7 @@ class AlertConsolidationEngine:
             message_data = {
                 'alert_type': 'CONNECT_ACCOUNT_QUOTA_VIOLATIONS',
                 'severity': self._determine_severity(violations),
-                'timestamp': datetime.utcnow().isoformat(),
+                'timestamp': datetime.now(timezone.utc).isoformat(),
                 'execution_id': self.execution_id,
                 'scope': 'ACCOUNT',
                 'violations_count': len(violations),
@@ -4537,7 +4537,7 @@ class AlertConsolidationEngine:
             message_data = {
                 'alert_type': 'CONNECT_INSTANCE_QUOTA_VIOLATIONS',
                 'severity': self._determine_severity(violations),
-                'timestamp': datetime.utcnow().isoformat(),
+                'timestamp': datetime.now(timezone.utc).isoformat(),
                 'execution_id': self.execution_id,
                 'scope': 'INSTANCE',
                 'instance_id': instance_id,
@@ -4572,7 +4572,7 @@ class AlertConsolidationEngine:
         message_lines = [
             "🚨 AMAZON CONNECT ACCOUNT QUOTA ALERT 🚨",
             "",
-            f"Alert Time: {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S UTC')}",
+            f"Alert Time: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')}",
             f"Execution ID: {self.execution_id}",
             f"Threshold: {self.threshold_percentage}%",
             "",
@@ -4616,7 +4616,7 @@ class AlertConsolidationEngine:
         message_lines = [
             "🚨 AMAZON CONNECT INSTANCE QUOTA ALERT 🚨",
             "",
-            f"Alert Time: {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S UTC')}",
+            f"Alert Time: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')}",
             f"Execution ID: {self.execution_id}",
             f"Threshold: {self.threshold_percentage}%",
             "",
@@ -4840,8 +4840,8 @@ def save_report_to_s3(s3_client, bucket, report_data):
     """Save report data to S3 bucket."""
     try:
         # Generate keys for the report
-        timestamp = datetime.utcnow().strftime('%Y%m%d_%H%M%S')
-        date_prefix = datetime.utcnow().strftime('%Y/%m/%d')
+        timestamp = datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')
+        date_prefix = datetime.now(timezone.utc).strftime('%Y/%m/%d')
         report_key = f"connect-reports/{date_prefix}/connect_quota_report_{timestamp}.json"
         latest_key = "connect-reports/latest/connect_quota_report.json"
         
@@ -4875,7 +4875,7 @@ def save_report_to_dynamodb(dynamodb_client, table_name, report_data):
     """Save report summary to DynamoDB table."""
     try:
         # Create a summary item for this execution
-        timestamp = datetime.utcnow().isoformat()
+        timestamp = datetime.now(timezone.utc).isoformat()
         
         # Basic attributes
         item = {
@@ -4918,7 +4918,7 @@ def save_report_to_dynamodb(dynamodb_client, table_name, report_data):
         logger.error(f"Error saving report to DynamoDB: {sanitize_log(str(e))}")
         return False
 
-def main():
+def cli_main():
     """Main function to run the quota monitor."""
     try:
         # Log execution start with unique ID for traceability
@@ -4987,7 +4987,7 @@ def main():
         # Add metadata to results for reporting
         report_data = {
             'execution_id': EXECUTION_ID,
-            'timestamp': datetime.utcnow().isoformat(),
+            'timestamp': datetime.now(timezone.utc).isoformat(),
             'region': region or 'default',
             'threshold_percentage': threshold,
             'monitoring_results': results,
@@ -5011,7 +5011,7 @@ def main():
             os.makedirs('reports', exist_ok=True)
             
             # Save results to file with timestamp for historical tracking
-            timestamp = datetime.utcnow().strftime('%Y%m%d_%H%M%S')
+            timestamp = datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')
             report_file = f'reports/connect_quota_report_{timestamp}.json'
             
             with open(report_file, 'w') as f:
@@ -5045,7 +5045,7 @@ def main():
         sys.exit(1)
 
 if __name__ == "__main__":
-    main()
+    cli_main()
 
 def main(event=None, context=None):
     """

@@ -76,8 +76,8 @@ After deploying, **check your inbox** for an SNS subscription confirmation email
 | `NotificationEmail` | *(required)* | Email address for quota breach alerts |
 | `ThresholdPercentage` | `80` | Alert when quotas exceed this % (0-100) |
 | `ScheduleExpression` | `rate(1 hour)` | How often to check (cron or rate) |
-| `LambdaTimeout` | `300` | Lambda timeout in seconds |
-| `LambdaMemory` | `256` | Lambda memory in MB |
+| `LambdaTimeout` | `600` | Lambda timeout in seconds |
+| `LambdaMemory` | `512` | Lambda memory in MB |
 | `UseS3Storage` | `true` | Store historical data in S3 |
 | `UseDynamoDBStorage` | `false` | Store data in DynamoDB (optional) |
 
@@ -159,6 +159,20 @@ python3 connect-resource-mapper.py → Phone Numbers → Flows → Lambdas → Q
 | Full getting started (all platforms) | [docs/GETTING_STARTED.md](docs/GETTING_STARTED.md) |
 | IAM permissions required | [iam/README.md](iam/README.md) |
 | Operations guide (archives, peaks) | [docs/operations-guide.md](docs/operations-guide.md) |
+
+---
+
+## Cost
+
+| Component | Estimated monthly cost |
+|-----------|----------------------|
+| Lambda (hourly execution) | $1-3 (depends on instance size) |
+| S3 (quota history storage) | $0.10-0.50 |
+| DynamoDB (if enabled, PAY_PER_REQUEST) | $0.25-2.00 |
+| SNS (alert emails) | $0.10 |
+| CloudWatch (alarms + logs) | $0.50-1.00 |
+| **Total (pilot)** | **~$3/month** |
+| **Total (production, large instance)** | **~$8/month** |
 
 ---
 

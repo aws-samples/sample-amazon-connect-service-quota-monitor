@@ -353,11 +353,11 @@ Resources:
     Type: AWS::DynamoDB::Table
     Condition: UseDynamoDB
     Properties:
-      TableName: !Ref DynamoDBTableName
-      BillingMode: PROVISIONED
-      ProvisionedThroughput:
-        ReadCapacityUnits: 5
-        WriteCapacityUnits: 5
+      TableName: !Sub "${AWS::StackName}-metrics"
+      BillingMode: PAY_PER_REQUEST
+      TimeToLiveSpecification:
+        AttributeName: ttl
+        Enabled: true
       AttributeDefinitions:
         - AttributeName: id
           AttributeType: S
@@ -833,6 +833,50 @@ Resources:
       Action: lambda:InvokeFunction
       Principal: events.amazonaws.com
       SourceArn: !GetAtt ScheduledRule.Arn
+
+  # CloudWatch Log Group with retention (M1)
+  LambdaLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${QuotaMonitorLambda}"
+      RetentionInDays: 30
+
+  # Self-monitoring alarms (H1) — alerts if the monitor itself is broken
+  LambdaErrorAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "${AWS::StackName}-LambdaErrors"
+      AlarmDescription: "The quota monitor Lambda is failing"
+      Namespace: AWS/Lambda
+      MetricName: Errors
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref QuotaMonitorLambda
+      Statistic: Sum
+      Period: 3600
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      AlarmActions:
+        - !Ref AlertSNSTopic
+
+  LambdaDurationAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "${AWS::StackName}-LambdaDuration"
+      AlarmDescription: "The quota monitor Lambda is running longer than expected"
+      Namespace: AWS/Lambda
+      MetricName: Duration
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref QuotaMonitorLambda
+      Statistic: Maximum
+      Period: 3600
+      EvaluationPeriods: 1
+      Threshold: 500000
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      AlarmActions:
+        - !Ref AlertSNSTopic
 
 Outputs:
   LambdaFunction:

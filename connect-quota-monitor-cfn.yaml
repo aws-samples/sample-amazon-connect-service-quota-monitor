@@ -911,14 +911,6 @@ Outputs:
       Deployment Method: ${DeploymentMethod}
     Condition: UseDynamoDB
     
-  DeadLetterQueueUrl:
-    Description: "Dead Letter Queue URL for failed Lambda executions"
-    Value: !Ref LambdaDeadLetterQueue
-    
-  SecurityConfiguration:
-    Description: "Security features enabled"
-    Value: "SNS encryption, DynamoDB encryption with KMS, Lambda environment encryption, Dead Letter Queue, S3 access logging"
-    
   SubscribeToAlerts:
     Description: "Command to subscribe to alerts"
     Value: !Sub "aws sns subscribe --topic-arn ${AlertSNSTopic} --protocol email --notification-endpoint your-email@example.com"

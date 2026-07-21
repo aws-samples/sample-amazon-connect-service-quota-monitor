@@ -49,7 +49,6 @@ test-response.json
 response.json
 test_alert_mechanism.py
 /tmp/
-tests/
 *.xlsx
 *.xls
 

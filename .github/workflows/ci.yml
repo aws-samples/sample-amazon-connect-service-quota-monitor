@@ -1,0 +1,56 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install ruff
+      - run: ruff check . --ignore E501
+
+  cfn-validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install cfn-lint
+      - run: cfn-lint connect-quota-monitor-cfn.yaml
+      - run: cfn-lint live-refresh/template.yaml
+
+  security:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install pip-audit
+      - name: Secret scan
+        run: |
+          git grep -rnE "AKIA[A-Z0-9]{16}|sk_live_" -- '*.py' '*.json' '*.yaml' && exit 1 || echo "No secrets found"
+      - name: Check for hardcoded account IDs
+        run: |
+          git grep -rnE "[0-9]{12}" -- '*.py' '*.yaml' | grep -v "YOUR_ACCOUNT\|example\|000000\|123456" && echo "WARNING: possible hardcoded account ID" || echo "Clean"
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install pytest boto3 moto
+      - run: python -m pytest tests/ -v

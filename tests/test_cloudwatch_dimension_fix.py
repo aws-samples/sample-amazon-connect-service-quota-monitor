@@ -266,7 +266,7 @@ class TestMonitorViaCloudWatch(unittest.TestCase):
 class TestIntegrationCloudWatchFix(unittest.TestCase):
     """Integration tests using real AWS API (requires credentials)."""
 
-    INSTANCE_ID = os.environ.get('CONNECT_INSTANCE_ID', '6c3f17c0-3b52-4990-9c42-e27dd792b385')
+    INSTANCE_ID = os.environ.get('CONNECT_INSTANCE_ID', '00000000-0000-0000-0000-000000000001')
     REGION = os.environ.get('AWS_REGION', 'us-east-1')
 
     @unittest.skipUnless(

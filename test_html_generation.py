@@ -35,6 +35,6 @@ out_path = os.path.expanduser("~/Downloads/test-api-report-s3.html")
 with open(out_path, "w") as f:
     f.write(html)
 print(f"  Saved to: {out_path}")
-print(f"\nALL TESTS PASSED")
-print(f"This is the exact HTML that S3 will serve at your bookmark URL.")
+print("\nALL TESTS PASSED")
+print("This is the exact HTML that S3 will serve at your bookmark URL.")
 print(f"Open it: open {out_path}")

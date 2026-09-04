@@ -21,14 +21,14 @@ cd live-refresh/
 sam build
 sam deploy --guided \
     --parameter-overrides \
-        ConnectInstanceId=587c546e-2328-4c36-baa2-37eaf4749631
+        ConnectInstanceId=YOUR_INSTANCE_ID
 ```
 
 SAM will output your API endpoint URL. Pass it to the mapper:
 
 ```bash
 python connect-resource-mapper.py \
-    --instance-id 587c546e-2328-4c36-baa2-37eaf4749631 \
+    --instance-id YOUR_INSTANCE_ID \
     --region us-east-1 \
     --line-config line-config.json \
     --live-endpoint https://YOUR-API-ID.execute-api.us-east-1.amazonaws.com/prod/metrics \

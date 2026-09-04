@@ -132,7 +132,7 @@ The IAM permissions needed: [`iam/README.md`](../iam/README.md)
 4. Look at the URL in your browser — it contains your Instance ID:
 
 ```
-https://console.aws.amazon.com/connect/home?region=us-east-1#/instance/6c3f17c0-3b52-4990-9c42-e27dd792b385/dashboard
+https://console.aws.amazon.com/connect/home?region=us-east-1#/instance/YOUR_INSTANCE_ID/dashboard
                                                                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
                                                                          This is your Instance ID
 ```
@@ -215,7 +215,7 @@ Now run the tool. **Replace the instance ID and region with yours:**
 
 ```bash
 python3 connect-resource-mapper.py \
-  --instance-id 6c3f17c0-3b52-4990-9c42-e27dd792b385 \
+  --instance-id YOUR_INSTANCE_ID \
   --region us-east-1 \
   --output-dir ./output
 ```
@@ -226,7 +226,7 @@ python3 connect-resource-mapper.py \
 
 ```powershell
 python connect-resource-mapper.py `
-  --instance-id 6c3f17c0-3b52-4990-9c42-e27dd792b385 `
+  --instance-id YOUR_INSTANCE_ID `
   --region us-east-1 `
   --output-dir ./output
 ```
@@ -234,7 +234,7 @@ python connect-resource-mapper.py `
 
 **What success looks like:**
 ```
-[INFO] Scanning instance 6c3f17c0-3b52-4990-...
+[INFO] Scanning instance YOUR_INSTANCE_ID...
 [INFO] Found 12 phone numbers
 [INFO] Found 3 traffic distribution groups
 [INFO] Found 25 contact flows

@@ -13,13 +13,12 @@ Usage:
     python3 test_cloudwatch_fix.py --instance-id <YOUR_CONNECT_INSTANCE_ID> --region us-east-1 --inject-dummy
 
     # Test against Allstate prod (read-only, just validates metric exists)
-    python3 test_cloudwatch_fix.py --instance-id 587c546e-2328-4c36-baa2-37eaf4749631 --region us-east-1 --read-only
+    python3 test_cloudwatch_fix.py --instance-id YOUR_INSTANCE_ID --region us-east-1 --read-only
 """
 
 import boto3
 import argparse
-from datetime import datetime, timedelta
-import json
+from datetime import datetime, timedelta, timezone
 import sys
 
 
@@ -59,7 +58,7 @@ def test_old_query(cw_client, instance_id, metric_name):
     print(f"STEP 2: OLD query (BUG) - {metric_name} with InstanceId only")
     print("=" * 60)
 
-    end_time = datetime.utcnow()
+    end_time = datetime.now(timezone.utc)
     start_time = end_time - timedelta(minutes=15)
 
     response = cw_client.get_metric_statistics(
@@ -88,7 +87,7 @@ def test_new_query(cw_client, instance_id, metric_name, metric_group):
     print(f"STEP 3: NEW query (FIX) - {metric_name} with MetricGroup={metric_group}")
     print("=" * 60)
 
-    end_time = datetime.utcnow()
+    end_time = datetime.now(timezone.utc)
     start_time = end_time - timedelta(minutes=15)
 
     response = cw_client.get_metric_statistics(
@@ -107,7 +106,7 @@ def test_new_query(cw_client, instance_id, metric_name, metric_group):
     if response['Datapoints']:
         value = response['Datapoints'][0].get('Maximum', 0)
         print(f"  Result: {value}")
-        print(f"  FIX WORKS - got actual data with MetricGroup dimension.")
+        print("  FIX WORKS - got actual data with MetricGroup dimension.")
         return True
     else:
         print("  Result: NO DATA")
@@ -122,7 +121,7 @@ def inject_dummy_metrics(cw_client, instance_id):
     print("INJECTING DUMMY METRICS for testing")
     print("=" * 60)
 
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     metrics_to_inject = [
         ('ConcurrentCalls', 'VoiceCalls', 150.0),
         ('ConcurrentActiveChats', 'Chats', 45.0),
@@ -154,7 +153,7 @@ def inject_dummy_metrics(cw_client, instance_id):
 
 def run_tests(instance_id, region, inject_dummy=False, read_only=False):
     """Run the complete test suite."""
-    print(f"\nConnect Quota Monitor - CloudWatch Dimension Fix Test")
+    print("\nConnect Quota Monitor - CloudWatch Dimension Fix Test")
     print(f"Instance: {instance_id}")
     print(f"Region: {region}")
     print(f"Mode: {'read-only' if read_only else 'inject-dummy' if inject_dummy else 'standard'}")
@@ -164,7 +163,7 @@ def run_tests(instance_id, region, inject_dummy=False, read_only=False):
     cw_client = session.client('cloudwatch')
 
     # Step 1: List what exists
-    existing_metrics = test_list_metrics(cw_client, instance_id)
+    test_list_metrics(cw_client, instance_id)
 
     # Inject dummy data if requested
     if inject_dummy and not read_only:

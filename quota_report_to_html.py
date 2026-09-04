@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Convert Amazon Connect quota report JSON to an HTML dashboard."""
 
+import html
 import json
 import sys
 from datetime import datetime
-from pathlib import Path
 
 
 def util_class(pct):
@@ -25,7 +25,7 @@ def bar_row(name, usage, limit, pct, extra_cols=""):
     cls = util_class(pct)
     width = min(pct, 100)
     return (
-        f"<tr>{extra_cols}<td>{name}</td>"
+        f"<tr>{extra_cols}<td>{html.escape(str(name))}</td>"
         f'<td class="mono">{usage:,} / {limit:,}</td>'
         f'<td class="bar-cell"><div class="bar-bg"><div class="bar-fill {cls}" style="width:{width}%"></div></div></td>'
         f'<td class="right"><span class="util {cls}">{pct:.1f}%</span></td></tr>\n'
@@ -36,8 +36,8 @@ def api_row(name, service, limit, usage, pct):
     cls = util_class(pct)
     limit_str = f"{limit:g}"
     return (
-        f"<tr><td>{name}</td>"
-        f'<td class="mono">{service}</td>'
+        f"<tr><td>{html.escape(str(name))}</td>"
+        f'<td class="mono">{html.escape(str(service))}</td>'
         f'<td class="right mono">{limit_str}</td>'
         f'<td class="right mono">{usage}</td>'
         f'<td class="right"><span class="util {cls}">{pct:.1f}%</span></td></tr>\n'
@@ -214,7 +214,6 @@ def generate_html(data):
     mon = data["monitoring_results"]
     total_checked = mon.get("total_quotas_checked", 0)
     violations = mon.get("violations_found", 0)
-    instance_count = mon.get("instances_monitored", 0)
     account_checked = mon.get("account_quotas_checked", 0)
     ts = data.get("timestamp", "")
     threshold = data.get("threshold_percentage", 80)
@@ -250,17 +249,17 @@ def generate_html(data):
 
     acct_violations = sum(1 for r in acct_non_api if r.get("utilization_percentage", 0) >= threshold)
 
-    html = f"""<!DOCTYPE html>
+    html_out = f"""<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>Amazon Connect Quota Report — {instance_alias}</title>
+<title>Amazon Connect Quota Report — {html.escape(str(instance_alias))}</title>
 <style>{CSS}</style>
 </head>
 <body>
 <div class="container">
 <h1>Amazon Connect Quota Report</h1>
-<div class="subtitle">Instance: {instance_alias} ({instance_id}) — Generated: {ts_display}</div>
+<div class="subtitle">Instance: {html.escape(str(instance_alias))} ({html.escape(str(instance_id))}) — Generated: {html.escape(str(ts_display))}</div>
 
 <div class="kpi-row">
   <div class="kpi"><div class="kpi-label">Total quotas checked</div><div class="kpi-value">{total_checked}</div></div>
@@ -273,7 +272,7 @@ def generate_html(data):
 
     # Account-level non-API quotas
     if acct_non_api:
-        html += f"""<div class="section">
+        html_out += f"""<div class="section">
 <div class="section-header">Account-level quotas {badge(acct_violations) if acct_violations else '<span class="badge badge-green">0 violations</span>'}</div>
 <table><thead><tr><th>Quota</th><th>Scope</th><th>Usage / Limit</th><th class="bar-cell">Utilization</th><th class="right">%</th></tr></thead><tbody>\n"""
         for r in sorted(acct_non_api, key=lambda x: x.get("utilization_percentage", 0), reverse=True):
@@ -281,8 +280,8 @@ def generate_html(data):
             usage = int(r.get("current_usage", 0))
             limit = int(r.get("quota_limit", 0))
             scope_col = '<td><span class="scope-tag">ACCOUNT</span></td>'
-            html += bar_row(r["quota_name"], usage, limit, pct, extra_cols=scope_col)
-        html += "</tbody></table></div>\n"
+            html_out += bar_row(r["quota_name"], usage, limit, pct, extra_cols=scope_col)
+        html_out += "</tbody></table></div>\n"
 
     # Instance-level sections by category
     category_order = ["CORE_CONNECT", "CONTACT_HANDLING", "ROUTING_QUEUES", "INTEGRATIONS", "FORECASTING_CAPACITY"]
@@ -292,15 +291,15 @@ def generate_html(data):
             continue
         label = CATEGORY_LABELS.get(cat, cat)
         cat_violations = sum(1 for r in items if r.get("utilization_percentage", 0) >= threshold)
-        html += f"""<div class="section">
+        html_out += f"""<div class="section">
 <div class="section-header">{label} {badge(cat_violations)}</div>
 <table><thead><tr><th>Quota</th><th>Usage / Limit</th><th class="bar-cell">Utilization</th><th class="right">%</th></tr></thead><tbody>\n"""
         for r in items:
             pct = r.get("utilization_percentage", 0)
             usage = int(r.get("current_usage", 0))
             limit = int(r.get("quota_limit", 0))
-            html += bar_row(r["quota_name"], usage, limit, pct)
-        html += "</tbody></table></div>\n"
+            html_out += bar_row(r["quota_name"], usage, limit, pct)
+        html_out += "</tbody></table></div>\n"
 
     # Remaining instance categories not in the predefined order
     for cat, items in inst_groups.items():
@@ -308,21 +307,21 @@ def generate_html(data):
             continue
         label = CATEGORY_LABELS.get(cat, cat.replace("_", " ").title())
         cat_violations = sum(1 for r in items if r.get("utilization_percentage", 0) >= threshold)
-        html += f"""<div class="section">
+        html_out += f"""<div class="section">
 <div class="section-header">{label} {badge(cat_violations)}</div>
 <table><thead><tr><th>Quota</th><th>Usage / Limit</th><th class="bar-cell">Utilization</th><th class="right">%</th></tr></thead><tbody>\n"""
         for r in items:
             pct = r.get("utilization_percentage", 0)
             usage = int(r.get("current_usage", 0))
             limit = int(r.get("quota_limit", 0))
-            html += bar_row(r["quota_name"], usage, limit, pct)
-        html += "</tbody></table></div>\n"
+            html_out += bar_row(r["quota_name"], usage, limit, pct)
+        html_out += "</tbody></table></div>\n"
 
     # API Rate Limits
     if acct_api:
         api_violations = sum(1 for r in acct_api if r.get("utilization_percentage", 0) >= threshold)
-        api_badge = badge(api_violations) if api_violations else f'<span class="badge badge-green">All at 0% utilization</span>' if all(r.get("utilization_percentage", 0) == 0 for r in acct_api) else badge(api_violations)
-        html += f"""<div class="section">
+        api_badge = badge(api_violations) if api_violations else '<span class="badge badge-green">All at 0% utilization</span>' if all(r.get("utilization_percentage", 0) == 0 for r in acct_api) else badge(api_violations)
+        html_out += f"""<div class="section">
 <div class="section-header">API Rate Limits (Account-level, {len(acct_api)} quotas) {api_badge}</div>
 <table><thead><tr><th>API</th><th>Service</th><th class="right">Limit (TPS)</th><th class="right">Usage</th><th class="right">%</th></tr></thead><tbody>\n"""
         for r in acct_api:
@@ -330,12 +329,17 @@ def generate_html(data):
             usage = int(r.get("current_usage", 0))
             limit = r.get("quota_limit", 0)
             name = r["quota_name"].replace("Rate of ", "").replace(" API requests", "")
-            html += api_row(name, r.get("service", "connect"), limit, usage, pct)
-        html += "</tbody></table></div>\n"
+            html_out += api_row(name, r.get("service", "connect"), limit, usage, pct)
+        html_out += "</tbody></table></div>\n"
 
-    html += f"""<div class="footer">Amazon Connect Quota Report — Generated from {Path(input_path).name}</div>
+    # Footer source label: prefer an explicit value in the data, else fall back
+    # to a generic label. (Previously referenced the module-level `input_path`,
+    # which is only defined under __main__ and raised NameError when generate_html
+    # was called as a library.)
+    source_label = html.escape(str(data.get("source_file", "quota report")))
+    html_out += f"""<div class="footer">Amazon Connect Quota Report — Generated from {source_label}</div>
 </div></body></html>"""
-    return html
+    return html_out
 
 
 if __name__ == "__main__":

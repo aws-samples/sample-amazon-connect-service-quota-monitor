@@ -56,7 +56,7 @@ def match_flows_to_lines(
         Dict mapping line_id → list of matched flow dicts.
     """
     lines = line_config.get("lines", [])
-    matched: dict[str, list[dict[str, Any]]] = {l["id"]: [] for l in lines}
+    matched: dict[str, list[dict[str, Any]]] = {ln["id"]: [] for ln in lines}
     matched["_unmatched"] = []
 
     for flow in flows:
@@ -155,7 +155,7 @@ def auto_discover_lines_from_tags(
         },
     })
 
-    logger.info("Auto-discovered %d lines from tag '%s': %s", len(lines) - 1, tag_key, [l["name"] for l in lines[:-1]])
+    logger.info("Auto-discovered %d lines from tag '%s': %s", len(lines) - 1, tag_key, [ln["name"] for ln in lines[:-1]])
 
     return {
         "lines": lines,
@@ -182,7 +182,7 @@ def match_numbers_to_lines(
         Dict mapping line_id → list of matched number dicts.
     """
     lines = line_config.get("lines", [])
-    matched: dict[str, list[dict[str, Any]]] = {l["id"]: [] for l in lines}
+    matched: dict[str, list[dict[str, Any]]] = {ln["id"]: [] for ln in lines}
     matched["_unmatched"] = []
 
     for num in numbers:
@@ -258,7 +258,6 @@ def build_dashboard_data(
     # Build LINES array
     lines_data = []
     contacts_per_number = defaults.get("contacts_per_number_per_day", 15)
-    apis_per_contact = defaults.get("apis_per_contact", 18)
 
     for line_cfg in line_config.get("lines", []):
         line_id = line_cfg["id"]
@@ -301,7 +300,7 @@ def build_dashboard_data(
         })
 
     # Build TOTAL_CAPACITY
-    total_daily = sum(l["today"] for l in lines_data)
+    total_daily = sum(ln["today"] for ln in lines_data)
     limiting_api, limiting_pct = _find_limiting_api(system_api_usage)
     max_daily = int(total_daily / (limiting_pct / 100)) if limiting_pct > 0 else total_daily * 2
 
@@ -744,20 +743,18 @@ def generate_v4_dashboard(
     model: dict[str, Any],
     line_config: dict[str, Any],
     output_path: str,
-    live_endpoint: str | None = None,
 ) -> None:
     """Generate the full v4 interactive operations dashboard.
 
     Args:
         resource_map: Full resource graph from collection phase.
         model: Quota impact model from build phase.
-        live_endpoint: Optional API Gateway URL for live refresh (Part 2).
         line_config: Parsed line-config.json.
         output_path: File path for the generated HTML file.
     """
     dashboard_data = build_dashboard_data(resource_map, model, line_config)
 
-    html = _render_v4_html(dashboard_data, live_endpoint)
+    html = _render_v4_html(dashboard_data)
 
     with open(output_path, "w", encoding="utf-8") as f:
         f.write(html)
@@ -765,17 +762,29 @@ def generate_v4_dashboard(
     logger.info("V4 Dashboard generated: %s", output_path)
 
 
-def _render_v4_html(data: dict[str, Any], live_endpoint: str | None = None) -> str:
+def _render_v4_html(data: dict[str, Any]) -> str:
     """Render the complete v4 dashboard HTML with embedded data.
 
     The HTML template is the full interactive dashboard with CSS, JS,
     and the data injected as a JSON payload that the JS renders.
     """
-    lines_json = json.dumps(data["LINES"], default=str)
-    api_usage_json = json.dumps(data["SYSTEM_API_USAGE"], default=str)
-    flow_detail_json = json.dumps(data["FLOW_DETAIL"], default=str)
-    capacity_json = json.dumps(data["TOTAL_CAPACITY"], default=str)
-    metadata_json = json.dumps(data["metadata"], default=str)
+    # Escape < > & so the JSON embedded in <script> cannot break out of the
+    # script block (a Connect flow/line name like "</script>..." is otherwise a
+    # stored-XSS breakout). The JS `esc()` helper below then HTML-escapes each
+    # value before it is placed into innerHTML.
+    def _json_for_script(obj: Any) -> str:
+        return (
+            json.dumps(obj, default=str)
+            .replace("<", "\\u003c")
+            .replace(">", "\\u003e")
+            .replace("&", "\\u0026")
+        )
+
+    lines_json = _json_for_script(data["LINES"])
+    api_usage_json = _json_for_script(data["SYSTEM_API_USAGE"])
+    flow_detail_json = _json_for_script(data["FLOW_DETAIL"])
+    capacity_json = _json_for_script(data["TOTAL_CAPACITY"])
+    metadata_json = _json_for_script(data["metadata"])
 
     return f"""<!DOCTYPE html>
 <html lang="en">
@@ -927,6 +936,33 @@ const FLOW_DETAIL = {flow_detail_json};
 const TOTAL_CAPACITY = {capacity_json};
 const METADATA = {metadata_json};
 
+// HTML-escape any value placed into innerHTML. Connect flow/line names are
+// user-controlled, so an unescaped name executes as markup (stored XSS).
+function esc(v) {{
+  return String(v == null ? '' : v).replace(/[&<>"']/g, c => ({{
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+  }}[c]));
+}}
+// Click/keyboard handling uses event delegation on data- attributes rather than
+// inline onclick="fn('id')". That removes the JS-string-in-HTML-attribute context
+// entirely (no escaping juggling) AND preserves the exact id/name: dataset decodes
+// the HTML entities esc() produced back to the original value, so a flow named with
+// <, >, & or a quote still matches line.flows.find(f => f.name === name).
+document.addEventListener('click', (e) => {{
+  const el = e.target.closest('[data-action]');
+  if (!el) return;
+  if (el.dataset.action === 'select-line') selectLine(el.dataset.id);
+  else if (el.dataset.action === 'select-flow') selectFlow(el.dataset.id);
+}});
+document.addEventListener('keydown', (e) => {{
+  if (e.key !== 'Enter' && e.key !== ' ') return;
+  const el = e.target.closest('[data-action]');
+  if (!el) return;
+  e.preventDefault();
+  if (el.dataset.action === 'select-line') selectLine(el.dataset.id);
+  else if (el.dataset.action === 'select-flow') selectFlow(el.dataset.id);
+}});
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // STATE
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -983,11 +1019,11 @@ function renderHealthStrip() {{
     const statusShape = statusColor === 'red' ? '■' : statusColor === 'yellow' ? '▲' : '●';
     const statusLabel = statusColor === 'red' ? 'Critical' : statusColor === 'yellow' ? 'Warning' : 'Healthy';
     return `
-      <div class="health-pill ${{state.selectedLine === line.id ? 'selected' : ''}}" onclick="selectLine('${{line.id}}')" role="button" tabindex="0" aria-label="${{line.name}}: ${{statusLabel}}, ${{line.capacityPct}}% capacity" onkeydown="if(event.key==='Enter')selectLine('${{line.id}}')">
+      <div class="health-pill ${{state.selectedLine === line.id ? 'selected' : ''}}" data-action="select-line" data-id="${{esc(line.id)}}" role="button" tabindex="0" aria-label="${{esc(line.name)}}: ${{statusLabel}}, ${{line.capacityPct}}% capacity">
         <div style="display:flex;align-items:center;gap:4px;">
           <span class="pill-status ${{statusColor}}" aria-hidden="true"></span>
           <span style="font-size:10px;color:${{capColor}}" aria-hidden="true">${{statusShape}}</span>
-          <span class="pill-name">${{line.name}}</span>
+          <span class="pill-name">${{esc(line.name)}}</span>
         </div>
         <div class="pill-vol">${{formatNum(vol)}}</div>
         <div class="pill-meta">${{formatNum(line.numbers)}} numbers · ${{volLabel}}</div>
@@ -1030,24 +1066,24 @@ function renderLineDetail(line) {{
   return `
     <div class="chart-section">
       <div class="chart-header">
-        <h2>${{line.name}} — ${{formatNum(vol)}} calls ${{timeLabel}}</h2>
-        <span class="trend ${{line.trendDir}}">${{line.trend}} vs last week</span>
+        <h2>${{esc(line.name)}} — ${{formatNum(vol)}} calls ${{timeLabel}}</h2>
+        <span class="trend ${{line.trendDir}}">${{esc(line.trend)}} vs last week</span>
       </div>
       ${{renderHourChart(line.hourly)}}
-      <div style="font-size:10px;color:var(--muted);margin-top:6px;">Peak hour: ${{line.peakHour}} · ${{line.number}} · ${{formatNum(line.numbers)}} numbers</div>
+      <div style="font-size:10px;color:var(--muted);margin-top:6px;">Peak hour: ${{esc(line.peakHour)}} · ${{esc(line.number)}} · ${{formatNum(line.numbers)}} numbers</div>
     </div>
     <div class="capacity-section">
       <div class="chart-header"><h2>Capacity Status</h2></div>
       ${{renderCapacityCard(line)}}
       <div style="font-size:11px;color:var(--muted);margin-top:8px;">
-        You can handle <strong style="color:var(--text)">${{formatNum(Math.round(vol / line.capacityPct * (100 - line.capacityPct)))}}</strong> more calls ${{timeLabel}} before degradation on this line.
+        You can handle <strong style="color:var(--text)">${{headroom(vol, line.capacityPct)}}</strong> more calls ${{timeLabel}} before degradation on this line.
       </div>
     </div>
     <div class="drill-section">
       <h3>Where calls go (Contact Flows)</h3>
       ${{line.flows.map(f => `
-        <div class="drill-item" onclick="selectFlow('${{f.name}}')">
-          <span class="d-name">${{f.name}}</span>
+        <div class="drill-item" data-action="select-flow" data-id="${{esc(f.name)}}" role="button" tabindex="0" aria-label="Drill into flow ${{esc(f.name)}}">
+          <span class="d-name">${{esc(f.name)}}</span>
           <div class="d-bar"><div class="fill" style="width:${{f.pct}}%; background:var(--purple)"></div></div>
           <span class="d-vol">${{formatNum(f.vol)}} (${{f.pct}}%)</span>
         </div>
@@ -1135,7 +1171,7 @@ function renderPlanner() {{
           <span class="pr-label">Status</span><span class="pr-val">${{statusLabel}}</span>
         </div>
         <div class="pr-line"><span class="pr-label">Headroom remaining</span><span class="pr-val">${{formatNum(TOTAL_CAPACITY.maxCallsPerDay - newTotal)}}</span></div>
-        <div class="pr-line"><span class="pr-label">Limiting factor</span><span class="pr-val">${{TOTAL_CAPACITY.limitingApi}} (${{TOTAL_CAPACITY.limitingPct}}% today)</span></div>
+        <div class="pr-line"><span class="pr-label">Limiting factor</span><span class="pr-val">${{esc(TOTAL_CAPACITY.limitingApi)}} (${{TOTAL_CAPACITY.limitingPct}}% today)</span></div>
       </div>
     </div>
 
@@ -1154,7 +1190,7 @@ function renderPlanner() {{
         return `
           <div style="padding:8px 0;border-bottom:1px solid #21262d;">
             <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;">
-              <span style="font-size:10px;font-weight:600;width:180px;">${{name}}</span>
+              <span style="font-size:10px;font-weight:600;width:180px;">${{esc(name)}}</span>
               <span style="font-size:9px;color:var(--muted);">Current: ${{usage.total}} TPS</span>
               <span style="font-size:9px;color:var(--muted);">Limit: ${{usage.limit}} TPS</span>
               ${{needsSLI ? '<span style="font-size:9px;background:#3a1c1c;color:var(--red);padding:1px 5px;border-radius:3px;margin-left:auto;">SLI needed</span>' : '<span style="font-size:9px;color:var(--green);margin-left:auto;">OK</span>'}}
@@ -1228,12 +1264,11 @@ function renderHourChart(hourly) {{
 function renderCapacityCard(line) {{
   const pct = line.capacityPct;
   const color = pct > 80 ? 'var(--red)' : pct > 60 ? 'var(--yellow)' : 'var(--green)';
-  const remaining = Math.round(line.today / pct * (100 - pct));
   return `
-    <div class="capacity-card" onclick="selectLine('${{line.id}}')">
-      <div class="cap-header"><span class="cap-name">${{line.name}}</span><span class="cap-pct" style="color:${{color}}">${{pct}}%</span></div>
+    <div class="capacity-card" data-action="select-line" data-id="${{esc(line.id)}}" role="button" tabindex="0" aria-label="Select line ${{esc(line.name)}}">
+      <div class="cap-header"><span class="cap-name">${{esc(line.name)}}</span><span class="cap-pct" style="color:${{color}}">${{pct}}%</span></div>
       <div class="cap-bar"><div class="fill" style="width:${{pct}}%;background:${{color}}"></div></div>
-      <div class="cap-remaining">Can handle <strong>${{formatNum(remaining)}}</strong> more calls today</div>
+      <div class="cap-remaining">Can handle <strong>${{headroom(line.today, pct)}}</strong> more calls today</div>
     </div>
   `;
 }}
@@ -1245,17 +1280,17 @@ function renderDetailPanel() {{
   panel.innerHTML = `
     <div class="detail-card">
       <h4>Line Summary</h4>
-      <div class="detail-row"><span class="label">Phone number</span><span class="value">${{line.number}}</span></div>
+      <div class="detail-row"><span class="label">Phone number</span><span class="value">${{esc(line.number)}}</span></div>
       <div class="detail-row"><span class="label">Total numbers</span><span class="value">${{formatNum(line.numbers)}}</span></div>
       <div class="detail-row"><span class="label">Today's volume</span><span class="value">${{formatNum(line.today)}}</span></div>
       <div class="detail-row"><span class="label">This hour</span><span class="value">${{formatNum(line.hour)}}</span></div>
-      <div class="detail-row"><span class="label">Peak hour</span><span class="value">${{line.peakHour}}</span></div>
-      <div class="detail-row"><span class="label">Trend</span><span class="value" style="color:${{line.trendDir === 'up' ? 'var(--green)' : 'var(--red)'}}">${{line.trend}} vs last week</span></div>
+      <div class="detail-row"><span class="label">Peak hour</span><span class="value">${{esc(line.peakHour)}}</span></div>
+      <div class="detail-row"><span class="label">Trend</span><span class="value" style="color:${{line.trendDir === 'up' ? 'var(--green)' : 'var(--red)'}}">${{esc(line.trend)}} vs last week</span></div>
     </div>
     <div class="detail-card">
       <h4>Capacity</h4>
       <div class="detail-row"><span class="label">Current utilization</span><span class="value">${{line.capacityPct}}%</span></div>
-      <div class="detail-row"><span class="label">Remaining headroom</span><span class="value">${{formatNum(Math.round(line.today / line.capacityPct * (100 - line.capacityPct)))}} calls</span></div>
+      <div class="detail-row"><span class="label">Remaining headroom</span><span class="value">${{headroom(line.today, line.capacityPct)}} calls</span></div>
     </div>
     <div class="detail-card">
       <h4>7-Day Volume</h4>
@@ -1287,7 +1322,7 @@ function selectFlow(name) {{
   const dailyVol = flow.vol;
   panel.innerHTML = `
     <div class="detail-card">
-      <h4>📞 ${{name}}</h4>
+      <h4>📞 ${{esc(name)}}</h4>
       <div class="detail-row"><span class="label">Calls today</span><span class="value">${{formatNum(dailyVol)}}</span></div>
       <div class="detail-row"><span class="label">Share of line</span><span class="value">${{flow.pct}}%</span></div>
       <div class="detail-row"><span class="label">Steps per call</span><span class="value">${{chain.steps.length}}</span></div>
@@ -1296,10 +1331,10 @@ function selectFlow(name) {{
       <h4>What happens during each call</h4>
       ${{chain.steps.map((step, i) => `
         <div style="display:flex;align-items:flex-start;padding:5px 0;${{i > 0 ? 'border-top:1px solid #21262d;' : ''}}">
-          <span style="font-size:14px;margin-right:8px;">${{step.icon}}</span>
+          <span style="font-size:14px;margin-right:8px;">${{esc(step.icon)}}</span>
           <div style="flex:1;">
-            <div style="font-size:11px;font-weight:500;">${{step.label}}</div>
-            <div style="font-size:10px;color:var(--muted);">${{step.detail}}</div>
+            <div style="font-size:11px;font-weight:500;">${{esc(step.label)}}</div>
+            <div style="font-size:10px;color:var(--muted);">${{esc(step.detail)}}</div>
           </div>
           <span style="font-size:10px;color:var(--cyan);white-space:nowrap;">${{formatNum(Math.round(dailyVol * step.pctCalls))}}/day</span>
         </div>
@@ -1315,7 +1350,7 @@ function selectFlow(name) {{
         return `
           <div style="padding:6px 0;border-bottom:1px solid #21262d;">
             <div style="display:flex;justify-content:space-between;font-size:10px;margin-bottom:3px;">
-              <span>${{api.name}}</span>
+              <span>${{esc(api.name)}}</span>
               <span style="color:${{totalColor}}">System: ${{overall.total}} / ${{overall.limit}} TPS (${{totalPct}}%)</span>
             </div>
             <div style="height:6px;background:#21262d;border-radius:3px;overflow:hidden;position:relative;">
@@ -1363,140 +1398,15 @@ function clearApiSliders() {{
   renderContent();
 }}
 function aggregateHourly() {{ const agg = new Array(24).fill(0); LINES.forEach(l => l.hourly.forEach((v, i) => agg[i] += v)); return agg; }}
-function formatNum(n) {{ if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M'; if (n >= 1000) return (n / 1000).toFixed(0) + 'K'; return n.toLocaleString(); }}
+function formatNum(n) {{ if (!isFinite(n)) return '—'; if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M'; if (n >= 1000) return (n / 1000).toFixed(0) + 'K'; return n.toLocaleString(); }}
+// Headroom = how many more calls fit before the line hits capacity. It is
+// derived from current volume and percent-used, so it is undefined when the
+// line has no measured utilization yet (percent-used is 0). Show a dash then
+// rather than Infinity or NaN.
+function headroom(vol, pct) {{ return (pct > 0 && isFinite(vol)) ? formatNum(Math.round(vol / pct * (100 - pct))) : '—'; }}
 
 function render() {{ renderHealthStrip(); renderContent(); renderDetailPanel(); }}
 render();
-
-{_render_live_refresh_js(live_endpoint)}
 </script>
 </body>
 </html>"""
-
-
-def _render_live_refresh_js(live_endpoint: str | None) -> str:
-    """Generate the live refresh JavaScript block.
-
-    When live_endpoint is provided, adds a polling mechanism that:
-    - Fetches fresh metrics every 60 seconds
-    - Updates LINES, SYSTEM_API_USAGE, TOTAL_CAPACITY in place
-    - Re-renders the dashboard with new data
-    - Shows a "Last updated" timestamp
-    - Pauses polling when the tab is not visible
-
-    Args:
-        live_endpoint: API Gateway URL (e.g., https://xxx.execute-api.region.amazonaws.com/prod/metrics)
-
-    Returns:
-        JavaScript string to inject, or empty string if no endpoint.
-    """
-    if not live_endpoint:
-        return "// Live refresh disabled — no endpoint configured"
-
-    return f"""
-// ═══════════════════════════════════════════════════════════════════════════════
-// LIVE REFRESH — polls {live_endpoint} every 60s
-// ═══════════════════════════════════════════════════════════════════════════════
-
-(function() {{
-  const ENDPOINT = '{live_endpoint}';
-  const POLL_INTERVAL_MS = 60000; // 60 seconds
-  let pollTimer = null;
-  let lastUpdate = null;
-
-  // Add status indicator to header
-  const header = document.querySelector('.header h1');
-  const badge = header.querySelector('.data-badge');
-  if (badge) badge.innerHTML = '● Live <span id="live-ts" style="font-size:8px;opacity:0.7;margin-left:4px;"></span>';
-
-  async function fetchLiveData() {{
-    const view = state.timeView === 'plan' ? 'today' : state.timeView;
-    try {{
-      const url = `${{ENDPOINT}}?view=${{view}}`;
-      const resp = await fetch(url);
-      if (!resp.ok) throw new Error(`HTTP ${{resp.status}}`);
-      const data = await resp.json();
-      applyLiveData(data);
-      lastUpdate = new Date();
-      updateTimestamp();
-    }} catch (err) {{
-      console.warn('[LiveRefresh] Fetch failed:', err.message);
-      const badge = document.querySelector('.data-badge');
-      if (badge) badge.style.background = '#3a1c1c';
-      if (badge) badge.style.color = 'var(--red)';
-    }}
-  }}
-
-  function applyLiveData(data) {{
-    // Merge live LINES data (update volumes, keep static config)
-    if (data.LINES && data.LINES.length) {{
-      data.LINES.forEach((liveL, i) => {{
-        if (LINES[i]) {{
-          LINES[i].today = liveL.today || LINES[i].today;
-          LINES[i].hour = liveL.hour || LINES[i].hour;
-          if (liveL.hourly && liveL.hourly.some(v => v > 0)) {{
-            LINES[i].hourly = liveL.hourly;
-          }}
-          if (liveL.capacityPct) LINES[i].capacityPct = liveL.capacityPct;
-        }}
-      }});
-    }}
-
-    // Merge SYSTEM_API_USAGE
-    if (data.SYSTEM_API_USAGE) {{
-      Object.keys(data.SYSTEM_API_USAGE).forEach(api => {{
-        SYSTEM_API_USAGE[api] = data.SYSTEM_API_USAGE[api];
-      }});
-    }}
-
-    // Merge TOTAL_CAPACITY
-    if (data.TOTAL_CAPACITY) {{
-      Object.assign(TOTAL_CAPACITY, data.TOTAL_CAPACITY);
-    }}
-
-    // Re-render
-    render();
-
-    // Flash the badge green briefly
-    const badge = document.querySelector('.data-badge');
-    if (badge) {{
-      badge.style.background = '#1c3a1c';
-      badge.style.color = 'var(--green)';
-    }}
-  }}
-
-  function updateTimestamp() {{
-    const el = document.getElementById('live-ts');
-    if (el && lastUpdate) {{
-      el.textContent = lastUpdate.toLocaleTimeString();
-    }}
-  }}
-
-  function startPolling() {{
-    if (pollTimer) clearInterval(pollTimer);
-    fetchLiveData(); // Immediate first fetch
-    pollTimer = setInterval(fetchLiveData, POLL_INTERVAL_MS);
-  }}
-
-  function stopPolling() {{
-    if (pollTimer) {{ clearInterval(pollTimer); pollTimer = null; }}
-  }}
-
-  // Pause when tab is hidden
-  document.addEventListener('visibilitychange', () => {{
-    if (document.hidden) {{ stopPolling(); }}
-    else {{ startPolling(); }}
-  }});
-
-  // Re-fetch when time view changes
-  const origTimeHandler = document.querySelectorAll('.time-btn');
-  origTimeHandler.forEach(btn => {{
-    btn.addEventListener('click', () => {{
-      setTimeout(fetchLiveData, 100); // Fetch after state updates
-    }});
-  }});
-
-  // Start
-  startPolling();
-}})();
-"""

@@ -64,7 +64,10 @@ HIGH_TRAFFIC_APIS = (
 def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
     """Entry point. Handles both scheduled events and API Gateway requests."""
     instance_id = os.environ.get("CONNECT_INSTANCE_ID", "")
-    bucket = os.environ.get("S3_BUCKET", "")
+    # Template provides S3_REPORT_BUCKET (not S3_BUCKET); reading the wrong name
+    # left bucket empty, silently disabling all S3 writes (latest/archive/peak) and
+    # the 7-day history feature.
+    bucket = os.environ.get("S3_REPORT_BUCKET", "")
 
     if not instance_id:
         return _response(400, {"error": "CONNECT_INSTANCE_ID not configured"})
@@ -258,7 +261,6 @@ def _write_latest(bucket: str, snapshot: dict[str, Any]) -> None:
     with all tabs (All APIs, Per Flow, Quotas, Lambdas), sortable tables,
     and search. The snapshot data is merged into the model for current TPS.
     """
-    import tempfile
 
     s3 = boto3.client("s3")
     instance_id = os.environ.get("CONNECT_INSTANCE_ID", "")

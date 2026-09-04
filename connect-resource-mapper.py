@@ -29,7 +29,7 @@ Required IAM Permissions (read-only):
 Usage:
     pip install boto3
     python connect-resource-mapper.py \\
-        --instance-id 587c546e-2328-4c36-baa2-37eaf4749631 \\
+        --instance-id YOUR_INSTANCE_ID \\
         --region us-east-1 \\
         --output-dir ./output
 
@@ -43,7 +43,6 @@ import argparse
 import json
 import logging
 import os
-import sys
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -827,163 +826,6 @@ def build_quota_impact_model(
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# DASHBOARD GENERATOR
-# ═══════════════════════════════════════════════════════════════════════════════
-
-
-def generate_dashboard(
-    resource_map: dict[str, Any],
-    model: dict[str, Any],
-    output_path: str,
-) -> None:
-    """Generate a self-contained interactive HTML dashboard.
-
-    The dashboard embeds all collected data as a JSON payload and renders
-    an interactive quota calculator with flow chain visualization.
-
-    Args:
-        resource_map: Full resource graph from collection phase.
-        model: Quota impact model from build phase.
-        output_path: File path for the generated HTML file.
-    """
-    dashboard_data = _build_dashboard_payload(resource_map, model)
-    data_json = json.dumps(dashboard_data, default=str)
-
-    html = _render_dashboard_html(data_json)
-
-    with open(output_path, "w", encoding="utf-8") as f:
-        f.write(html)
-
-    logger.info("Dashboard generated: %s", output_path)
-
-
-def _build_dashboard_payload(
-    resource_map: dict[str, Any], model: dict[str, Any]
-) -> dict[str, Any]:
-    """Build the JSON data payload embedded in the dashboard HTML.
-
-    Args:
-        resource_map: Full resource graph.
-        model: Quota impact model.
-
-    Returns:
-        Dictionary containing all data needed by the dashboard JavaScript.
-    """
-    flows_with_lambdas = {
-        k: v for k, v in model["flow_to_lambda_map"].items() if v
-    }
-
-    flow_names: dict[str, str] = {}
-    flow_types: dict[str, str] = {}
-    for flow in resource_map.get("contact_flows", []):
-        if isinstance(flow, dict):
-            flow_names[flow.get("Id", "")] = flow.get(
-                "Name", flow.get("Id", "")[:8]
-            )
-            flow_types[flow.get("Id", "")] = flow.get("Type", "CONTACT_FLOW")
-
-    phone_numbers: list[dict[str, str]] = []
-    for num in resource_map.get("phone_numbers", []):
-        if isinstance(num, dict):
-            target_arn = num.get("TargetArn", num.get("targetArn", ""))
-            phone_numbers.append(
-                {
-                    "number": num.get("PhoneNumber", num.get("phoneNumber", "")),
-                    "type": num.get(
-                        "PhoneNumberType", num.get("phoneNumberType", "")
-                    ),
-                    "tdg": target_arn.split("/")[-1] if "/" in target_arn else "",
-                    "id": num.get("PhoneNumberId", num.get("phoneNumberId", "")),
-                }
-            )
-
-    lambda_details: dict[str, dict[str, Any]] = {}
-    for lam in resource_map.get("lambda_functions", []):
-        if isinstance(lam, dict) and "FunctionName" in lam:
-            lambda_details[lam.get("FunctionArn", "")] = {
-                "name": lam["FunctionName"],
-                "runtime": lam.get("Runtime", "unknown"),
-                "memory": lam.get("MemorySize", 0),
-                "timeout": lam.get("Timeout", 0),
-                "pc": len(lam.get("ProvisionedConcurrency", [])) > 0,
-            }
-
-    key_quotas: dict[str, dict[str, Any]] = {
-        code: q
-        for code, q in model.get("quota_headroom", {}).items()
-        if q.get("limit", 0) > 0
-    }
-
-    return {
-        "flows": flows_with_lambdas,
-        "flow_names": flow_names,
-        "flow_types": flow_types,
-        "phone_numbers": phone_numbers,
-        "lambda_details": lambda_details,
-        "quotas": key_quotas,
-        "summary": model.get("summary", {}),
-        "formulas": model.get("migration_impact_formulas", {}),
-        "instance_id": resource_map.get("instance_id", ""),
-        "region": resource_map.get("region", ""),
-        "generated_at": model.get("generated_at", ""),
-        "tdg_distribution": model.get("tdg_number_distribution", {}),
-    }
-
-
-def _render_dashboard_html(data_json: str) -> str:
-    """Render the complete dashboard HTML with embedded data.
-
-    Args:
-        data_json: JSON-serialized dashboard payload.
-
-    Returns:
-        Complete HTML string for the dashboard file.
-    """
-    # Dashboard HTML is generated separately — see connect-dashboard-v3.html
-    # for the interactive drill-down version. This generates a basic
-    # calculator for standalone use.
-    return f"""<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<title>Connect Quota Impact Calculator</title>
-<style>
-:root {{ --bg: #0d1117; --panel: #161b22; --border: #30363d; --text: #c9d1d9; --blue: #58a6ff; --green: #3fb950; --yellow: #d29922; --red: #f85149; }}
-* {{ margin: 0; padding: 0; box-sizing: border-box; }}
-body {{ font-family: -apple-system, sans-serif; background: var(--bg); color: var(--text); font-size: 13px; padding: 24px; }}
-h1 {{ color: var(--blue); font-size: 16px; margin-bottom: 16px; }}
-.meta {{ color: #8b949e; font-size: 11px; margin-bottom: 24px; }}
-.grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; margin-bottom: 24px; }}
-.card {{ background: var(--panel); border: 1px solid var(--border); border-radius: 6px; padding: 16px; text-align: center; }}
-.card .num {{ font-size: 28px; font-weight: 700; color: var(--blue); }}
-.card .lbl {{ font-size: 10px; color: #8b949e; margin-top: 4px; }}
-pre {{ background: var(--panel); border: 1px solid var(--border); border-radius: 6px; padding: 16px; overflow-x: auto; font-size: 11px; }}
-</style>
-</head>
-<body>
-<h1>Connect Quota Impact Calculator</h1>
-<div class="meta" id="meta"></div>
-<div class="grid" id="summary"></div>
-<h2 style="font-size:13px;color:var(--blue);margin:16px 0 8px;">Raw Data</h2>
-<pre id="data"></pre>
-<script>
-const DATA = {data_json};
-document.getElementById('meta').textContent = `Instance: ${{DATA.instance_id}} | Region: ${{DATA.region}} | Generated: ${{DATA.generated_at}}`;
-const s = DATA.summary;
-document.getElementById('summary').innerHTML = `
-  <div class="card"><div class="num">${{s.total_numbers}}</div><div class="lbl">Phone Numbers</div></div>
-  <div class="card"><div class="num">${{Object.keys(DATA.flows).length}}</div><div class="lbl">Flows with Lambdas</div></div>
-  <div class="card"><div class="num">${{s.total_connect_lambdas}}</div><div class="lbl">Lambda Functions</div></div>
-  <div class="card"><div class="num">${{s.lambdas_with_provisioned_concurrency}}</div><div class="lbl">Provisioned Concurrency</div></div>
-  <div class="card"><div class="num">${{s.quotas_above_70_pct}}</div><div class="lbl">Quotas > 70%</div></div>
-`;
-document.getElementById('data').textContent = JSON.stringify(DATA, null, 2);
-</script>
-</body>
-</html>"""
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
 # MAIN
 # ═══════════════════════════════════════════════════════════════════════════════
 
@@ -1029,7 +871,7 @@ def main() -> None:
         epilog=(
             "Example:\n"
             "  python connect-resource-mapper.py \\\n"
-            "    --instance-id 587c546e-2328-4c36-baa2-37eaf4749631 \\\n"
+            "    --instance-id YOUR_INSTANCE_ID \\\n"
             "    --region us-east-1 \\\n"
             "    --output-dir ./output\n"
         ),
@@ -1053,14 +895,6 @@ def main() -> None:
     )
     parser.add_argument(
         "--profile", default=None, help="AWS CLI profile name (default: environment default)"
-    )
-    parser.add_argument(
-        "--line-config", default=None,
-        help="Path to line-config.json for v4 operations dashboard (optional)"
-    )
-    parser.add_argument(
-        "--live-endpoint", default=None,
-        help="API Gateway URL for live CloudWatch refresh (from SAM deploy output)"
     )
     args = parser.parse_args()
 

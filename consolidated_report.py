@@ -15,6 +15,7 @@ License: MIT-0
 
 from __future__ import annotations
 
+import html
 import json
 import logging
 from collections import defaultdict
@@ -264,10 +265,25 @@ def _render_report_html(
 ) -> str:
     """Render the full consolidated report HTML."""
 
-    all_apis_json = json.dumps(all_apis, default=str)
-    per_flow_json = json.dumps(per_flow, default=str)
-    quota_json = json.dumps(quota_table, default=str)
-    lambda_json = json.dumps(lambda_table, default=str)
+    # Escape characters that could break out of the <script> block or inject
+    # markup. Connect resource names (flow names, Lambda names, etc.) are
+    # user-controlled, so a name like "</script><img src=x onerror=...>" would
+    # otherwise execute when the report is opened (stored XSS). Escaping < > &
+    # to their \uXXXX forms keeps the JSON valid while making breakout
+    # impossible. Interpolated string values are additionally HTML-escaped at
+    # render time via the esc() helper below.
+    def _json_for_script(obj: Any) -> str:
+        return (
+            json.dumps(obj, default=str)
+            .replace("<", "\\u003c")
+            .replace(">", "\\u003e")
+            .replace("&", "\\u0026")
+        )
+
+    all_apis_json = _json_for_script(all_apis)
+    per_flow_json = _json_for_script(per_flow)
+    quota_json = _json_for_script(quota_table)
+    lambda_json = _json_for_script(lambda_table)
 
     return f"""<!DOCTYPE html>
 <html lang="en">
@@ -329,9 +345,9 @@ tr:hover td {{ background: #1c2128; }}
 
 <h1>📋 Connect API Consolidated Report</h1>
 <div class="meta">
-  Instance: {resource_map.get("instance_id", "")} &nbsp;|&nbsp;
-  Region: {resource_map.get("region", "")} &nbsp;|&nbsp;
-  Generated: {summary["generated_at"]}
+  Instance: {html.escape(str(resource_map.get("instance_id", "")))} &nbsp;|&nbsp;
+  Region: {html.escape(str(resource_map.get("region", "")))} &nbsp;|&nbsp;
+  Generated: {html.escape(str(summary["generated_at"]))}
 </div>
 
 <div class="summary-grid">
@@ -425,14 +441,22 @@ const PER_FLOW = {per_flow_json};
 const QUOTAS = {quota_json};
 const LAMBDAS = {lambda_json};
 
+// HTML-escape any value interpolated into innerHTML. Connect resource names are
+// user-controlled; without this a crafted name executes as markup (stored XSS).
+function esc(v) {{
+  return String(v == null ? '' : v).replace(/[&<>"']/g, c => ({{
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+  }}[c]));
+}}
+
 function renderApis() {{
   document.getElementById('tbody-apis').innerHTML = ALL_APIS.map(a => `
     <tr>
-      <td style="font-weight:600;">${{a.api}}</td>
-      <td>${{a.action_types.map(t => `<span class="tag">${{t}}</span>`).join('')}}</td>
-      <td style="text-align:right;font-weight:600;">${{a.total_calls_per_contact}}</td>
-      <td style="text-align:right;">${{a.flow_count}}</td>
-      <td style="text-align:right;">${{a.max_in_single_flow}}</td>
+      <td style="font-weight:600;">${{esc(a.api)}}</td>
+      <td>${{a.action_types.map(t => `<span class="tag">${{esc(t)}}</span>`).join('')}}</td>
+      <td style="text-align:right;font-weight:600;">${{esc(a.total_calls_per_contact)}}</td>
+      <td style="text-align:right;">${{esc(a.flow_count)}}</td>
+      <td style="text-align:right;">${{esc(a.max_in_single_flow)}}</td>
     </tr>
   `).join('');
 }}
@@ -440,12 +464,12 @@ function renderApis() {{
 function renderFlows() {{
   document.getElementById('tbody-flows').innerHTML = PER_FLOW.map(f => `
     <tr>
-      <td style="font-weight:600;">${{f.flow_name}}</td>
-      <td style="font-size:10px;color:var(--muted);">${{f.flow_type}}</td>
-      <td style="text-align:right;font-weight:600;">${{f.total_api_calls_per_contact}}</td>
-      <td style="text-align:right;">${{f.unique_apis}}</td>
-      <td style="text-align:right;">${{f.lambda_count}}</td>
-      <td style="font-size:10px;">${{f.apis.map(a => `${{a.api.split(':').pop()}} ×${{a.count}}`).join(', ')}}</td>
+      <td style="font-weight:600;">${{esc(f.flow_name)}}</td>
+      <td style="font-size:10px;color:var(--muted);">${{esc(f.flow_type)}}</td>
+      <td style="text-align:right;font-weight:600;">${{esc(f.total_api_calls_per_contact)}}</td>
+      <td style="text-align:right;">${{esc(f.unique_apis)}}</td>
+      <td style="text-align:right;">${{esc(f.lambda_count)}}</td>
+      <td style="font-size:10px;">${{f.apis.map(a => `${{esc(a.api.split(':').pop())}} ×${{esc(a.count)}}`).join(', ')}}</td>
     </tr>
   `).join('');
 }}
@@ -456,9 +480,9 @@ function renderQuotas() {{
     const statusClass = q.utilization_pct > 85 ? 'critical' : q.utilization_pct > 70 ? 'warning' : 'ok';
     return `
       <tr>
-        <td style="font-weight:600;">${{q.api_name}}</td>
-        <td style="text-align:right;">${{q.limit_tps}}</td>
-        <td style="text-align:right;">${{q.current_peak_tps}}</td>
+        <td style="font-weight:600;">${{esc(q.api_name)}}</td>
+        <td style="text-align:right;">${{esc(q.limit_tps)}}</td>
+        <td style="text-align:right;">${{esc(q.current_peak_tps)}}</td>
         <td>
           <div style="display:flex;align-items:center;gap:6px;">
             <div class="bar" style="flex:1;"><div class="fill" style="width:${{Math.min(q.utilization_pct, 100)}}%;background:${{color}};"></div></div>
@@ -468,7 +492,7 @@ function renderQuotas() {{
         <td style="text-align:right;">${{q.headroom_tps.toFixed(1)}} TPS</td>
         <td style="text-align:right;">${{q.avg_daily_calls.toLocaleString()}}</td>
         <td style="text-align:right;">${{q.peak_daily_calls.toLocaleString()}}</td>
-        <td><span class="tag ${{statusClass}}">${{q.status}}</span></td>
+        <td><span class="tag ${{statusClass}}">${{esc(q.status)}}</span></td>
       </tr>
     `;
   }}).join('');
@@ -477,13 +501,13 @@ function renderQuotas() {{
 function renderLambdas() {{
   document.getElementById('tbody-lambdas').innerHTML = LAMBDAS.map(l => `
     <tr>
-      <td style="font-weight:600;">${{l.name}}</td>
-      <td>${{l.runtime}}</td>
-      <td style="text-align:right;">${{l.memory_mb}} MB</td>
-      <td style="text-align:right;">${{l.timeout_sec}}s</td>
+      <td style="font-weight:600;">${{esc(l.name)}}</td>
+      <td>${{esc(l.runtime)}}</td>
+      <td style="text-align:right;">${{esc(l.memory_mb)}} MB</td>
+      <td style="text-align:right;">${{esc(l.timeout_sec)}}s</td>
       <td>${{l.provisioned_concurrency ? '<span class="tag ok">Yes</span>' : '<span class="tag">No</span>'}}</td>
-      <td style="text-align:right;">${{l.flow_count}}</td>
-      <td style="font-size:10px;">${{l.invoked_by_flows.join(', ') || '—'}}</td>
+      <td style="text-align:right;">${{esc(l.flow_count)}}</td>
+      <td style="font-size:10px;">${{l.invoked_by_flows.map(esc).join(', ') || '—'}}</td>
     </tr>
   `).join('');
 }}

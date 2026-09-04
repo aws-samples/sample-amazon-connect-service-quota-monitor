@@ -20,8 +20,8 @@ MetricGroup for backward compatibility with smaller instances.
 import unittest
 import sys
 import os
-from unittest.mock import Mock, patch, MagicMock, call
-from datetime import datetime, timedelta
+from unittest.mock import Mock, patch
+from datetime import datetime, timedelta, timezone
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -50,14 +50,13 @@ class TestCloudWatchMetricGroupDimension(unittest.TestCase):
         self.assertEqual(tasks_config['metric_group'], 'Tasks')
         self.assertEqual(tasks_config['metric_name'], 'ConcurrentActiveTasks')
 
-    def test_metric_config_has_fallback_for_calls(self):
-        """Verify ConcurrentCalls has a fallback metric name."""
+    def test_concurrent_calls_has_no_percentage_fallback(self):
+        """ConcurrentCalls must NOT fall back to a percentage metric: a percentage
+        is not a count, and dividing it by the count limit produced false 800%
+        CRITICAL alerts. The invalid fallback was removed."""
         metrics = lambda_function.ENHANCED_CONNECT_QUOTA_METRICS
         calls_config = metrics['L-12AB7C57']
-        self.assertEqual(
-            calls_config['metric_name_fallback'],
-            'ConcurrentHighVolumeCallsPercentage'
-        )
+        self.assertNotIn('percent', calls_config.get('metric_name_fallback', '').lower())
 
 
 class TestMonitorViaCloudWatch(unittest.TestCase):
@@ -81,7 +80,7 @@ class TestMonitorViaCloudWatch(unittest.TestCase):
             # Mock successful response with MetricGroup dimension
             monitor.call_service_api = Mock(return_value={
                 'Datapoints': [
-                    {'Timestamp': datetime.utcnow(), 'Maximum': 150.0}
+                    {'Timestamp': datetime.now(timezone.utc), 'Maximum': 150.0}
                 ]
             })
 
@@ -121,7 +120,7 @@ class TestMonitorViaCloudWatch(unittest.TestCase):
             monitor = lambda_function.ConnectQuotaMonitor()
             monitor.call_service_api = Mock(return_value={
                 'Datapoints': [
-                    {'Timestamp': datetime.utcnow(), 'Maximum': 50.0}
+                    {'Timestamp': datetime.now(timezone.utc), 'Maximum': 50.0}
                 ]
             })
 
@@ -133,7 +132,7 @@ class TestMonitorViaCloudWatch(unittest.TestCase):
                 'scope': 'INSTANCE'
             }
 
-            result = monitor._monitor_via_cloudwatch(self.instance_id, metric_config)
+            monitor._monitor_via_cloudwatch(self.instance_id, metric_config)
 
             # Verify only InstanceId dimension
             call_args = monitor.call_service_api.call_args
@@ -155,12 +154,14 @@ class TestMonitorViaCloudWatch(unittest.TestCase):
             # First call returns empty (ConcurrentCalls), second returns data (fallback)
             monitor.call_service_api = Mock(side_effect=[
                 {'Datapoints': []},  # Primary metric: no data
-                {'Datapoints': [{'Timestamp': datetime.utcnow(), 'Maximum': 85.0}]},  # Fallback
+                {'Datapoints': [{'Timestamp': datetime.now(timezone.utc), 'Maximum': 85.0}]},  # Fallback
             ])
 
+            # Use a non-percentage fallback: the fallback mechanism is still valid
+            # for genuine count metrics; only percentage metrics are rejected.
             metric_config = {
                 'metric_name': 'ConcurrentCalls',
-                'metric_name_fallback': 'ConcurrentHighVolumeCallsPercentage',
+                'metric_name_fallback': 'ConcurrentCallsAlt',
                 'namespace': 'AWS/Connect',
                 'statistic': 'Maximum',
                 'scope': 'INSTANCE',
@@ -176,7 +177,7 @@ class TestMonitorViaCloudWatch(unittest.TestCase):
             second_call = monitor.call_service_api.call_args_list[1]
             self.assertEqual(
                 second_call.kwargs.get('MetricName', second_call[1].get('MetricName')),
-                'ConcurrentHighVolumeCallsPercentage'
+                'ConcurrentCallsAlt'
             )
 
             self.assertEqual(result, 85)
@@ -194,7 +195,7 @@ class TestMonitorViaCloudWatch(unittest.TestCase):
             monitor.call_service_api = Mock(side_effect=[
                 {'Datapoints': []},  # Primary with MetricGroup: no data
                 {'Datapoints': []},  # Fallback with MetricGroup: no data
-                {'Datapoints': [{'Timestamp': datetime.utcnow(), 'Maximum': 200.0}]},  # No MetricGroup
+                {'Datapoints': [{'Timestamp': datetime.now(timezone.utc), 'Maximum': 200.0}]},  # No MetricGroup
             ])
 
             metric_config = {
@@ -301,8 +302,8 @@ class TestIntegrationCloudWatchFix(unittest.TestCase):
             Namespace='AWS/Connect',
             MetricName='ConcurrentCalls',
             Dimensions=[{'Name': 'InstanceId', 'Value': self.INSTANCE_ID}],
-            StartTime=datetime.utcnow() - timedelta(minutes=15),
-            EndTime=datetime.utcnow(),
+            StartTime=datetime.now(timezone.utc) - timedelta(minutes=15),
+            EndTime=datetime.now(timezone.utc),
             Period=300,
             Statistics=['Maximum']
         )
@@ -315,8 +316,8 @@ class TestIntegrationCloudWatchFix(unittest.TestCase):
                 {'Name': 'InstanceId', 'Value': self.INSTANCE_ID},
                 {'Name': 'MetricGroup', 'Value': 'VoiceCalls'}
             ],
-            StartTime=datetime.utcnow() - timedelta(minutes=15),
-            EndTime=datetime.utcnow(),
+            StartTime=datetime.now(timezone.utc) - timedelta(minutes=15),
+            EndTime=datetime.now(timezone.utc),
             Period=300,
             Statistics=['Maximum']
         )

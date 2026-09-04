@@ -12,8 +12,6 @@ import json
 import sys
 import os
 import pytest
-from unittest.mock import patch, MagicMock
-from datetime import datetime, timedelta
 from botocore.stub import Stubber
 import boto3
 
@@ -457,7 +455,7 @@ class TestCollectUsageMetrics:
 
     def test_peak_tps_calculation(self, cw_client):
         """Peak TPS = peak daily calls / 28800 (8hr business day)."""
-        with Stubber(cw_client) as stubber:
+        with Stubber(cw_client):
             # We need to stub for each API in the high_traffic_apis list
             # Just test the math with a known value
             daily_calls = 748769  # Example high-volume Monday

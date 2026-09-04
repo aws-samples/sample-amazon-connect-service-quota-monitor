@@ -33,7 +33,7 @@ It automatically discovers Connect instances and monitors all configured quotas.
 import boto3
 import logging
 import json
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import os
 import sys
 import re
@@ -41,7 +41,6 @@ import time
 from botocore.exceptions import ClientError, BotoCoreError
 from botocore.config import Config
 import uuid
-import io
 
 # Configure logging with secure defaults
 logging.basicConfig(
@@ -53,93 +52,48 @@ logging.basicConfig(
 )
 logger = logging.getLogger('connect-quota-monitor')
 
-# Import enhanced security compliance
-try:
-    from enhanced_security_compliance import (
-        SecurityDataSanitizer, 
-        SecurityConfigValidator,
-        log_secure_info,
-        log_secure_warning,
-        log_secure_error,
-        log_secure_debug
-    )
-    ENHANCED_SECURITY_AVAILABLE = True
-except ImportError:
-    ENHANCED_SECURITY_AVAILABLE = False
-    # Fallback sanitization function
-    def sanitize_log(message):
-        """Sanitize potentially sensitive data from log messages."""
-        # Remove any potential AWS account IDs
-        message = re.sub(r'\d{12}', '[ACCOUNT_ID]', str(message))
-        # Remove any potential ARNs
-        message = re.sub(r'arn:aws:[^:\s]+(:[^:\s]+)*', '[ARN]', message)
-        return message
-
-# Import enhanced error handling
-try:
-    from enhanced_error_handling import (
-        EnhancedErrorHandler,
-        ErrorContext,
-        ErrorCategory,
-        ErrorSeverity,
-        error_handler_decorator,
-        GracefulDegradationManager
-    )
-    ENHANCED_ERROR_HANDLING_AVAILABLE = True
-except ImportError:
-    ENHANCED_ERROR_HANDLING_AVAILABLE = False
-    logger.warning("Enhanced error handling module not available, using basic error handling")
-
-# Import performance optimizer
-try:
-    from performance_optimizer import (
-        PerformanceOptimizer,
-        CacheConfig,
-        ParallelConfig,
-        PaginationConfig,
-        performance_monitor
-    )
-    PERFORMANCE_OPTIMIZER_AVAILABLE = True
-except ImportError:
-    PERFORMANCE_OPTIMIZER_AVAILABLE = False
-    logger.warning("Performance optimizer module not available, using basic processing")
-
-# Enhanced sanitization function
 def sanitize_log(message):
-    """Enhanced sanitize function with fallback."""
-    if ENHANCED_SECURITY_AVAILABLE:
-        return SecurityDataSanitizer.sanitize_message(message)
-    else:
-        # Fallback sanitization
-        message = re.sub(r'\d{12}', '[ACCOUNT_ID]', str(message))
-        message = re.sub(r'arn:aws:[^:\s]+(:[^:\s]+)*', '[ARN]', message)
-        return message
+    """Redact account IDs and ARNs from log messages."""
+    message = re.sub(r'\d{12}', '[ACCOUNT_ID]', str(message))
+    message = re.sub(r'arn:aws:[^:\s]+(:[^:\s]+)*', '[ARN]', message)
+    return message
 
-# Constants with enhanced security validation
+
 def get_validated_config():
-    """Get and validate configuration parameters"""
-    config = {
+    """Get configuration parameters from the environment."""
+    return {
         'threshold_percentage': os.environ.get('THRESHOLD_PERCENTAGE', '80'),
         's3_bucket': os.environ.get('S3_BUCKET', ''),
         'dynamodb_table': os.environ.get('DYNAMODB_TABLE', ''),
         'use_s3_storage': os.environ.get('USE_S3_STORAGE', 'false'),
-        'use_dynamodb': os.environ.get('USE_DYNAMODB', 'false')
+        'use_dynamodb': os.environ.get('USE_DYNAMODB', 'false'),
     }
-    
-    # Validate configuration if enhanced security is available
-    if ENHANCED_SECURITY_AVAILABLE:
-        validation_errors = SecurityConfigValidator.validate_all_parameters(config)
-        if validation_errors:
-            log_secure_error(f"Configuration validation errors: {validation_errors}")
-            # Use defaults for invalid values
-            if not SecurityConfigValidator.validate_parameter('threshold_percentage', config['threshold_percentage'])[0]:
-                config['threshold_percentage'] = '80'
-    
-    return config
 
 # Get validated configuration
 CONFIG = get_validated_config()
-THRESHOLD_PERCENTAGE = int(CONFIG.get('threshold_percentage', '80'))  # Default to 80% for production
+
+
+def _coerce_threshold(value, default=80):
+    """Coerce the threshold to a sane int in [1, 100].
+
+    Runs at import time (Lambda cold start), so a bad THRESHOLD_PERCENTAGE env
+    value must not raise -- that would fail every invocation. Fall back to the
+    default instead. (The enhanced-security validator only runs when that
+    optional module is present.)
+    """
+    try:
+        parsed = int(float(value))
+    except (TypeError, ValueError, OverflowError):
+        # OverflowError covers 'inf'/'-inf'/'1e400' (float(inf) -> int fails).
+        logger.warning(f"Invalid THRESHOLD_PERCENTAGE {value!r}; using default {default}")
+        return default
+    if not 1 <= parsed <= 100:
+        logger.warning(f"THRESHOLD_PERCENTAGE {parsed} out of range 1-100; using default {default}")
+        return default
+    return parsed
+
+
+THRESHOLD_PERCENTAGE = _coerce_threshold(CONFIG.get('threshold_percentage', '80'))  # Default 80% for production
 EXECUTION_ID = str(uuid.uuid4())  # Unique ID for this execution for traceability
 
 # Load quota definitions from JSON (extracted from inline dict for maintainability)
@@ -163,7 +117,6 @@ else:
 }
 
 # Maintain backward compatibility with existing code
-CONNECT_QUOTA_METRICS = ENHANCED_CONNECT_QUOTA_METRICS
 
 # Quota categories for organization and filtering
 QUOTA_CATEGORIES = {
@@ -183,17 +136,6 @@ QUOTA_CATEGORIES = {
     'AGENT_SCHEDULING': 'Agent & Scheduling',
     'API_RATE_LIMITS': 'API Rate Limits'
 }
-
-def get_quotas_by_category(category=None):
-    """Get quotas filtered by category."""
-    if category is None:
-        return ENHANCED_CONNECT_QUOTA_METRICS
-    
-    return {
-        quota_code: config 
-        for quota_code, config in ENHANCED_CONNECT_QUOTA_METRICS.items()
-        if config.get('category') == category
-    }
 
 def get_quotas_by_scope(scope=None):
     """Get quotas filtered by scope (ACCOUNT or INSTANCE)."""
@@ -254,14 +196,8 @@ logger.info(f"Enhanced Connect Quota Monitor initialized with {len(ENHANCED_CONN
 
 class MultiServiceClientManager:
     """
-    Manages AWS service clients for all Connect-related services with comprehensive
-    error handling, retry logic, and health checking capabilities.
-    
-    Integrates with EnhancedErrorHandler for:
-    - Categorized error handling
-    - Exponential backoff retry strategies
-    - Service health monitoring
-    - Graceful degradation
+    Manages AWS service clients for all Connect-related services with
+    retry logic and health checking.
     """
     
     # Define all supported services and their configurations
@@ -273,21 +209,6 @@ class MultiServiceClientManager:
         },
         'connectcases': {
             'name': 'Amazon Connect Cases',
-            'required': False,
-            'retry_config': {'max_attempts': 3, 'mode': 'standard'}
-        },
-        'customer-profiles': {
-            'name': 'Amazon Connect Customer Profiles',
-            'required': False,
-            'retry_config': {'max_attempts': 3, 'mode': 'standard'}
-        },
-        'voice-id': {
-            'name': 'Amazon Connect Voice ID',
-            'required': False,
-            'retry_config': {'max_attempts': 3, 'mode': 'standard'}
-        },
-        'wisdom': {
-            'name': 'Amazon Connect Wisdom',
             'required': False,
             'retry_config': {'max_attempts': 3, 'mode': 'standard'}
         },
@@ -321,11 +242,6 @@ class MultiServiceClientManager:
             'required': False,
             'retry_config': {'max_attempts': 3, 'mode': 'standard'}
         },
-        'appintegrations': {
-            'name': 'Amazon AppIntegrations',
-            'required': False,
-            'retry_config': {'max_attempts': 3, 'mode': 'standard'}
-        },
         'sts': {
             'name': 'AWS Security Token Service',
             'required': False,
@@ -333,15 +249,14 @@ class MultiServiceClientManager:
         }
     }
     
-    def __init__(self, session, region_name=None, error_handler=None):
-        """Initialize the multi-service client manager with enhanced error handling."""
+    def __init__(self, session, region_name=None):
+        """Initialize the multi-service client manager."""
         self.session = session
         self.region_name = region_name or session.region_name
         self.clients = {}
         self.client_health = {}
         self.initialization_errors = {}
-        self.error_handler = error_handler
-        
+
         # Initialize all clients
         self._initialize_all_clients()
         
@@ -394,26 +309,11 @@ class MultiServiceClientManager:
             # Store client and mark as healthy
             self.clients[service_name] = client
             self.client_health[service_name] = True
-            
-            # Record successful initialization with error handler
-            if self.error_handler and hasattr(self.error_handler, 'degradation_manager'):
-                self.error_handler.degradation_manager.record_service_health(service_name, True)
-            
+
             logger.debug(f"Successfully initialized {service_config['name']} client")
-            
+
         except Exception as e:
             self.client_health[service_name] = False
-            
-            # Enhanced error handling for client initialization
-            if self.error_handler and ENHANCED_ERROR_HANDLING_AVAILABLE:
-                from enhanced_error_handling import ErrorContext
-                context = ErrorContext(
-                    operation='initialize_client',
-                    service=service_name,
-                    execution_id=getattr(self.error_handler, 'execution_id', None)
-                )
-                self.error_handler.handle_error(e, context)
-            
             logger.error(f"Failed to initialize {service_config['name']} client: {sanitize_log(str(e))}")
             raise
     
@@ -507,55 +407,18 @@ class MultiServiceClientManager:
 
 
 class ConnectQuotaMonitor:
-    def __init__(self, region_name=None, profile_name=None, s3_bucket=None, use_dynamodb=False, dynamodb_table=None, error_handler=None, performance_optimizer=None):
-        """Initialize the Connect Quota Monitor with enhanced multi-service client management, error handling, and performance optimization."""
-        # Store error handler for use throughout the class
-        self.error_handler = error_handler
-        
-        # Initialize performance optimizer
-        if performance_optimizer:
-            self.performance_optimizer = performance_optimizer
-        elif PERFORMANCE_OPTIMIZER_AVAILABLE:
-            # Create default performance optimizer with optimized settings for Lambda
-            cache_config = CacheConfig(
-                max_size=500,  # Smaller cache for Lambda memory constraints
-                ttl_seconds=300,  # 5 minutes
-                enable_memory_cache=True
-            )
-            parallel_config = ParallelConfig(
-                max_workers=min(5, os.cpu_count() or 1),  # Limit workers based on available CPUs
-                enable_parallel_instances=True,
-                enable_parallel_quotas=True,
-                batch_size=10,
-                timeout_seconds=240  # 4 minutes (less than Lambda timeout)
-            )
-            pagination_config = PaginationConfig(
-                max_pages_per_api=50,  # Reduced for Lambda
-                items_per_page=100,
-                enable_streaming=True,
-                memory_threshold_mb=200,  # Conservative for Lambda
-                enable_early_termination=True
-            )
-            
-            self.performance_optimizer = PerformanceOptimizer(
-                cache_config=cache_config,
-                parallel_config=parallel_config,
-                pagination_config=pagination_config
-            )
-            logger.info("Performance optimizer initialized with Lambda-optimized settings")
-        else:
-            self.performance_optimizer = None
-            logger.warning("Performance optimizer not available")
+    def __init__(self, region_name=None, profile_name=None, s3_bucket=None, use_dynamodb=False, dynamodb_table=None):
+        """Initialize the Connect Quota Monitor with multi-service client management."""
         try:
             # Validate and create session with appropriate security
             session = boto3.Session(profile_name=profile_name, region_name=region_name)
-            
+
             # Verify credentials are available
             if not session.get_credentials():
                 raise ValueError("No AWS credentials found. Please configure AWS credentials.")
-            
-            # Initialize multi-service client manager with error handler
-            self.client_manager = MultiServiceClientManager(session, region_name, error_handler)
+
+            # Initialize multi-service client manager
+            self.client_manager = MultiServiceClientManager(session, region_name)
             
             # Get commonly used clients for backward compatibility
             self.connect_client = self.client_manager.get_client('connect')
@@ -655,48 +518,8 @@ class ConnectQuotaMonitor:
         Returns:
             API response or None if failed
         """
-        # Use enhanced error handling if available
-        if self.error_handler and ENHANCED_ERROR_HANDLING_AVAILABLE:
-            from enhanced_error_handling import ErrorContext
-            
-            context = ErrorContext(
-                operation=f"{service_name}.{api_method}",
-                service=service_name,
-                execution_id=getattr(self.error_handler, 'execution_id', None)
-            )
-            
-            try:
-                return self.error_handler.retry_with_backoff(
-                    self._call_service_api_internal,
-                    context,
-                    service_name,
-                    api_method,
-                    **kwargs
-                )
-            except Exception as e:
-                log_secure_error(f"Enhanced error handling failed for {service_name}.{api_method}", error=e)
-                # Fallback to basic error handling
-                return self._call_service_api_basic(service_name, api_method, **kwargs)
-        else:
-            # Use basic error handling
-            return self._call_service_api_basic(service_name, api_method, **kwargs)
-    
-    def _call_service_api_internal(self, service_name, api_method, **kwargs):
-        """Internal API call method for enhanced error handling."""
-        client = self.get_service_client(service_name)
-        if not client:
-            raise Exception(f"No client available for service {service_name}")
-        
-        # Get the API method
-        if not hasattr(client, api_method):
-            raise Exception(f"API method {api_method} not available in {service_name} client")
-        
-        method = getattr(client, api_method)
-        
-        # Call the API
-        response = method(**kwargs)
-        return response
-    
+        return self._call_service_api_basic(service_name, api_method, **kwargs)
+
     def _call_service_api_basic(self, service_name, api_method, **kwargs):
         """Basic API call method with fallback error handling."""
         max_retries = 3
@@ -718,23 +541,12 @@ class ConnectQuotaMonitor:
                 
                 # Call the API
                 response = method(**kwargs)
-                
-                # Record success with error handler if available
-                if self.error_handler and hasattr(self.error_handler, 'degradation_manager'):
-                    self.error_handler.degradation_manager.record_service_health(service_name, True)
-                
                 return response
-                
+
             except ClientError as e:
                 error_code = e.response['Error']['Code']
                 error_msg = e.response['Error']['Message']
-                
-                # Record failure with error handler if available
-                if self.error_handler and hasattr(self.error_handler, 'degradation_manager'):
-                    from enhanced_error_handling import ErrorContext
-                    context = ErrorContext(operation=f"{service_name}.{api_method}", service=service_name)
-                    error_details = self.error_handler.handle_error(e, context)
-                
+
                 # Handle specific error types
                 if error_code in ['Throttling', 'ThrottlingException', 'RequestLimitExceeded']:
                     # Exponential backoff for throttling
@@ -836,23 +648,26 @@ class ConnectQuotaMonitor:
                             ],
                             'Projection': {
                                 'ProjectionType': 'ALL'
-                            },
-                            'ProvisionedThroughput': {
-                                'ReadCapacityUnits': 5,
-                                'WriteCapacityUnits': 5
                             }
+                            # No ProvisionedThroughput: PAY_PER_REQUEST tables have
+                            # on-demand GSIs (specifying it here would be rejected).
                         }
                     ],
-                    ProvisionedThroughput={
-                        'ReadCapacityUnits': 5,
-                        'WriteCapacityUnits': 5
-                    }
+                    # On-demand billing matches the documented behaviour (README)
+                    # and avoids throttling this bursty, low-volume workload.
+                    BillingMode='PAY_PER_REQUEST'
                 )
-                
+
                 # Wait for table to be created
                 table.meta.client.get_waiter('table_exists').wait(TableName=self.dynamodb_table)
                 logger.info(f"DynamoDB table {sanitize_log(self.dynamodb_table)} created successfully")
-        
+            else:
+                # Any other error (e.g. AccessDenied, throttling) must not be
+                # silently swallowed -- surface it so storage init fails loudly
+                # instead of proceeding as if the table were ready.
+                logger.error(f"Error checking DynamoDB table {sanitize_log(self.dynamodb_table)}: {e.response['Error']['Code']}")
+                raise
+
     def get_connect_instances(self, force_refresh=False):
         """
         Enhanced dynamic instance discovery with caching and comprehensive error handling.
@@ -869,90 +684,9 @@ class ConnectQuotaMonitor:
             if cache_age.total_seconds() < 300:  # 5 minute cache
                 logger.debug(f"Using cached instances ({len(self._cached_instances)} instances)")
                 return self._cached_instances
-        
-        instances = []
-        
-        # Use enhanced error handling if available
-        if self.error_handler and ENHANCED_ERROR_HANDLING_AVAILABLE:
-            context = ErrorContext(
-                operation='discover_instances',
-                service='connect',
-                execution_id=EXECUTION_ID
-            )
-            
-            try:
-                return self.error_handler.retry_with_backoff(
-                    self._discover_instances_with_retry,
-                    context,
-                    force_refresh
-                )
-            except Exception as e:
-                log_secure_error("Instance discovery failed after all retries", error=e)
-                return self._get_fallback_instances()
-        else:
-            # Fallback to basic error handling
-            return self._discover_instances_basic(force_refresh)
-    
-    def _discover_instances_with_retry(self, force_refresh=False):
-        """Internal method for instance discovery with enhanced error handling."""
-        instances = []
-        
-        try:
-            logger.info("Discovering Connect instances dynamically...")
-            
-            # Use enhanced API calling with retry logic
-            response = self.call_service_api('connect', 'list_instances')
-            
-            if not response:
-                raise ValueError("No response from list_instances API")
-            
-            # Get instances from first page
-            instances.extend(response.get('InstanceSummaryList', []))
-            
-            # Handle pagination
-            next_token = response.get('NextToken')
-            page_count = 1
-            max_pages = 50  # Reasonable limit
-            
-            while next_token and page_count < max_pages:
-                response = self.call_service_api('connect', 'list_instances', NextToken=next_token)
-                
-                if not response:
-                    logger.warning(f"Failed to get page {page_count + 1} of instances")
-                    break
-                
-                instances.extend(response.get('InstanceSummaryList', []))
-                next_token = response.get('NextToken')
-                page_count += 1
-            
-            if page_count >= max_pages:
-                logger.warning(f"Reached maximum pages ({max_pages}) when listing instances")
-            
-            # Enhance instance metadata
-            enhanced_instances = []
-            for instance in instances:
-                enhanced_instance = self._enhance_instance_metadata(instance)
-                if enhanced_instance:
-                    enhanced_instances.append(enhanced_instance)
-            
-            # Validate instances
-            valid_instances = self._validate_instances(enhanced_instances)
-            
-            # Cache the results
-            self._cached_instances = valid_instances
-            self._cache_timestamp = datetime.now(timezone.utc)
-            
-            logger.info(f"Successfully discovered {len(valid_instances)} Connect instances")
-            
-            # Log instance summary
-            self._log_instance_summary(valid_instances)
-            
-            return valid_instances
-            
-        except Exception as e:
-            # Re-raise for enhanced error handler to catch
-            raise
-    
+
+        return self._discover_instances_basic(force_refresh)
+
     def _discover_instances_basic(self, force_refresh=False):
         """Basic instance discovery with fallback error handling."""
         instances = []
@@ -1051,40 +785,6 @@ class ConnectQuotaMonitor:
             logger.error(f"Error enhancing instance metadata: {sanitize_log(str(e))}")
             return None
     
-    def _validate_instances(self, instances):
-        """Validate discovered instances and filter out invalid ones."""
-        valid_instances = []
-        
-        for instance in instances:
-            if self._is_valid_instance(instance):
-                valid_instances.append(instance)
-            else:
-                logger.warning(f"Filtering out invalid instance: {sanitize_log(instance.get('Id', 'unknown'))}")
-        
-        return valid_instances
-    
-    def _is_valid_instance(self, instance):
-        """Check if an instance is valid for monitoring."""
-        # Required fields
-        required_fields = ['Id', 'Arn', 'InstanceStatus']
-        for field in required_fields:
-            if not instance.get(field):
-                logger.debug(f"Instance missing required field: {field}")
-                return False
-        
-        # Must be active
-        if instance.get('InstanceStatus') != 'ACTIVE':
-            logger.debug(f"Instance {instance['Id']} is not active: {instance.get('InstanceStatus')}")
-            return False
-        
-        # Must have valid ARN format
-        arn = instance.get('Arn', '')
-        if not arn.startswith('arn:aws:connect:'):
-            logger.debug(f"Instance {instance['Id']} has invalid ARN format")
-            return False
-        
-        return True
-    
     def _handle_instance_discovery_error(self, error):
         """Handle errors during instance discovery with specific error types."""
         error_code = error.response['Error']['Code']
@@ -1123,46 +823,6 @@ class ConnectQuotaMonitor:
         
         logger.warning("No instances available - returning empty list")
         return []
-    
-    def _log_instance_summary(self, instances):
-        """Log a summary of discovered instances."""
-        if not instances:
-            logger.warning("No Connect instances found in this account/region")
-            return
-        
-        logger.info("=== Connect Instance Discovery Summary ===")
-        logger.info(f"Region: {self.region}")
-        logger.info(f"Account: {self._get_account_id()}")
-        logger.info(f"Total Instances: {len(instances)}")
-        
-        # Group by status
-        status_counts = {}
-        for instance in instances:
-            status = instance.get('InstanceStatus', 'UNKNOWN')
-            status_counts[status] = status_counts.get(status, 0) + 1
-        
-        for status, count in status_counts.items():
-            logger.info(f"  {status}: {count}")
-        
-        # Log instance details
-        for instance in instances:
-            alias = instance.get('InstanceAlias', 'No Alias')
-            instance_id = instance.get('Id', 'Unknown')
-            status = instance.get('InstanceStatus', 'Unknown')
-            logger.info(f"  Instance: {alias} ({instance_id}) - Status: {status}")
-    
-    def refresh_instance_cache(self):
-        """Force refresh of the instance cache."""
-        logger.info("Forcing refresh of Connect instance cache")
-        return self.get_connect_instances(force_refresh=True)
-    
-    def get_instance_by_id(self, instance_id):
-        """Get a specific instance by ID."""
-        instances = self.get_connect_instances()
-        for instance in instances:
-            if instance.get('Id') == instance_id:
-                return instance
-        return None
     
     def get_active_instances(self):
         """Get only active Connect instances."""
@@ -1210,14 +870,8 @@ class ConnectQuotaMonitor:
                 validation_results['issues'].append(f"Hardcoded environment variable found: {env_var}")
                 validation_results['is_distribution_ready'] = False
         
-        # Check for hardcoded instance IDs in common formats
-        hardcoded_patterns = [
-            r'[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}',  # UUID format
-            r'arn:aws:connect:[^:]+:[0-9]{12}:instance/[0-9a-f-]+',  # Connect instance ARN
-            r'[0-9]{12}'  # Account ID
-        ]
-        
-        # This is a basic check - in a real implementation, you'd scan the actual code files
+        # This is a basic check - in a real implementation, you'd scan the actual
+        # code files for hardcoded instance IDs / ARNs / account IDs.
         logger.info("Validating solution for distribution readiness...")
         
         # Check if we're using dynamic discovery (good sign)
@@ -1272,7 +926,7 @@ class ConnectQuotaMonitor:
         """
         # Use environment variable threshold or default
         if threshold_percentage is None:
-            threshold_percentage = int(os.environ.get('THRESHOLD_PERCENTAGE', THRESHOLD_PERCENTAGE))
+            threshold_percentage = _coerce_threshold(os.environ.get('THRESHOLD_PERCENTAGE', THRESHOLD_PERCENTAGE))
         
         logger.info("=== Starting Dynamic Connect Quota Monitoring ===")
         
@@ -1336,145 +990,48 @@ class ConnectQuotaMonitor:
         
         # Monitor instance-level quotas for each instance
         instance_quotas = get_instance_level_quotas()
-        
-        # Use parallel processing if performance optimizer is available
-        if self.performance_optimizer and len(instances) > 1:
-            logger.info(f"Using parallel processing for {len(instances)} instances")
+
+        for instance in instances:
+            instance_id = instance['Id']
+            instance_alias = instance.get('InstanceAlias', 'No Alias')
             
-            def monitor_single_instance(instance):
-                """Monitor quotas for a single instance"""
-                instance_id = instance['Id']
-                instance_alias = instance.get('InstanceAlias', 'No Alias')
-                
-                logger.info(f"Monitoring instance: {instance_alias} ({instance_id})")
-                
-                # Validate permissions for this instance
-                if not self.validate_instance_permissions(instance_id):
-                    return {
-                        'instance_id': instance_id,
-                        'instance_alias': instance_alias,
-                        'error': f"Insufficient permissions for instance {instance_id}",
-                        'quotas_checked': 0,
-                        'violations': 0,
-                        'results': []
-                    }
-                
-                instance_results = []
-                instance_violations = 0
-                instance_errors = []
-                
-                # Use parallel processing for quotas within the instance if enabled
-                quota_items = list(instance_quotas.items())
-                
-                if self.performance_optimizer and len(quota_items) > 5:
-                    # Process quotas in parallel
-                    with self.performance_optimizer.get_parallel_processor() as processor:
-                        quota_results = processor.process_quotas_parallel(
-                            quota_items,
-                            self.get_quota_utilization,
-                            instance_id
-                        )
+            logger.info(f"Monitoring instance: {instance_alias} ({instance_id})")
+            
+            # Validate permissions for this instance
+            if not self.validate_instance_permissions(instance_id):
+                error_msg = f"Insufficient permissions for instance {instance_id}"
+                logger.error(error_msg)
+                monitoring_results['errors'].append(error_msg)
+                continue
+            
+            instance_results = []
+            instance_violations = 0
+            
+            for quota_code, quota_config in instance_quotas.items():
+                try:
+                    result = self.get_quota_utilization(instance_id, quota_config, quota_code)
+                    if result:
+                        instance_results.append(result)
+                        monitoring_results['total_quotas_checked'] += 1
                         
-                        for i, result in enumerate(quota_results):
-                            if result:
-                                instance_results.append(result)
-                                if result['utilization_percentage'] >= threshold_percentage:
-                                    instance_violations += 1
-                                    logger.warning(f"Instance quota violation: {result['quota_name']} at {result['utilization_percentage']}% for {instance_alias}")
-                else:
-                    # Sequential processing for quotas
-                    for quota_code, quota_config in instance_quotas.items():
-                        try:
-                            result = self.get_quota_utilization(instance_id, quota_config, quota_code)
-                            if result:
-                                instance_results.append(result)
-                                if result['utilization_percentage'] >= threshold_percentage:
-                                    instance_violations += 1
-                                    logger.warning(f"Instance quota violation: {result['quota_name']} at {result['utilization_percentage']}% for {instance_alias}")
-                        except Exception as e:
-                            error_msg = f"Error monitoring quota {quota_code} for instance {instance_id}: {sanitize_log(str(e))}"
-                            logger.error(error_msg)
-                            instance_errors.append(error_msg)
-                
-                return {
-                    'instance_id': instance_id,
-                    'instance_alias': instance_alias,
-                    'quotas_checked': len(instance_results),
-                    'violations': instance_violations,
-                    'results': instance_results,
-                    'errors': instance_errors
-                }
-            
-            # Process instances in parallel
-            with self.performance_optimizer.get_parallel_processor() as processor:
-                instance_results_list = processor.process_instances_parallel(
-                    instances,
-                    monitor_single_instance
-                )
-            
-            # Aggregate results
-            for instance_result in instance_results_list:
-                if instance_result:
-                    instance_id = instance_result['instance_id']
-                    monitoring_results['instance_results'][instance_id] = {
-                        'instance_alias': instance_result['instance_alias'],
-                        'quotas_checked': instance_result['quotas_checked'],
-                        'violations': instance_result['violations'],
-                        'results': instance_result['results']
-                    }
-                    
-                    monitoring_results['instances_monitored'] += 1
-                    monitoring_results['total_quotas_checked'] += instance_result['quotas_checked']
-                    monitoring_results['violations_found'] += instance_result['violations']
-                    
-                    if 'error' in instance_result:
-                        monitoring_results['errors'].append(instance_result['error'])
-                    
-                    if 'errors' in instance_result:
-                        monitoring_results['errors'].extend(instance_result['errors'])
-        else:
-            # Sequential processing (original implementation)
-            for instance in instances:
-                instance_id = instance['Id']
-                instance_alias = instance.get('InstanceAlias', 'No Alias')
-                
-                logger.info(f"Monitoring instance: {instance_alias} ({instance_id})")
-                
-                # Validate permissions for this instance
-                if not self.validate_instance_permissions(instance_id):
-                    error_msg = f"Insufficient permissions for instance {instance_id}"
+                        if result['utilization_percentage'] >= threshold_percentage:
+                            instance_violations += 1
+                            monitoring_results['violations_found'] += 1
+                            logger.warning(f"Instance quota violation: {result['quota_name']} at {result['utilization_percentage']}% for {instance_alias}")
+                            
+                except Exception as e:
+                    error_msg = f"Error monitoring quota {quota_code} for instance {instance_id}: {sanitize_log(str(e))}"
                     logger.error(error_msg)
                     monitoring_results['errors'].append(error_msg)
-                    continue
-                
-                instance_results = []
-                instance_violations = 0
-                
-                for quota_code, quota_config in instance_quotas.items():
-                    try:
-                        result = self.get_quota_utilization(instance_id, quota_config, quota_code)
-                        if result:
-                            instance_results.append(result)
-                            monitoring_results['total_quotas_checked'] += 1
-                            
-                            if result['utilization_percentage'] >= threshold_percentage:
-                                instance_violations += 1
-                                monitoring_results['violations_found'] += 1
-                                logger.warning(f"Instance quota violation: {result['quota_name']} at {result['utilization_percentage']}% for {instance_alias}")
-                                
-                    except Exception as e:
-                        error_msg = f"Error monitoring quota {quota_code} for instance {instance_id}: {sanitize_log(str(e))}"
-                        logger.error(error_msg)
-                        monitoring_results['errors'].append(error_msg)
-                
-                monitoring_results['instance_results'][instance_id] = {
-                    'instance_alias': instance_alias,
-                    'quotas_checked': len(instance_results),
-                    'violations': instance_violations,
-                    'results': instance_results
-                }
-                
-                monitoring_results['instances_monitored'] += 1
+            
+            monitoring_results['instance_results'][instance_id] = {
+                'instance_alias': instance_alias,
+                'quotas_checked': len(instance_results),
+                'violations': instance_violations,
+                'results': instance_results
+            }
+            
+            monitoring_results['instances_monitored'] += 1
         
         # Log summary
         logger.info("=== Dynamic Monitoring Summary ===")
@@ -1491,7 +1048,7 @@ class ConnectQuotaMonitor:
             topic_arn = os.environ.get('ALERT_SNS_TOPIC_ARN')
         
         if not threshold_percentage:
-            threshold_percentage = int(os.environ.get('THRESHOLD_PERCENTAGE', THRESHOLD_PERCENTAGE))
+            threshold_percentage = _coerce_threshold(os.environ.get('THRESHOLD_PERCENTAGE', THRESHOLD_PERCENTAGE))
         
         if not topic_arn:
             logger.error("No SNS topic ARN provided for alerts")
@@ -1668,7 +1225,7 @@ class ConnectQuotaMonitor:
     def get_current_configuration(self):
         """Get current configuration settings for management purposes."""
         config = {
-            'threshold_percentage': int(os.environ.get('THRESHOLD_PERCENTAGE', THRESHOLD_PERCENTAGE)),
+            'threshold_percentage': _coerce_threshold(os.environ.get('THRESHOLD_PERCENTAGE', THRESHOLD_PERCENTAGE)),
             'alert_sns_topic_arn': os.environ.get('ALERT_SNS_TOPIC_ARN', ''),
             's3_bucket': self.s3_bucket or '',
             'use_dynamodb': self.use_dynamodb,
@@ -1735,8 +1292,8 @@ class ConnectQuotaMonitor:
         
         # Apply threshold update
         if 'threshold_percentage' in new_config:
-            old_threshold = int(os.environ.get('THRESHOLD_PERCENTAGE', THRESHOLD_PERCENTAGE))
-            new_threshold = int(new_config['threshold_percentage'])
+            old_threshold = _coerce_threshold(os.environ.get('THRESHOLD_PERCENTAGE', THRESHOLD_PERCENTAGE))
+            new_threshold = _coerce_threshold(new_config['threshold_percentage'])
             if old_threshold != new_threshold:
                 logger.info(f"Threshold updated from {old_threshold}% to {new_threshold}%")
                 # Note: Environment variable updates require Lambda function configuration update
@@ -1819,53 +1376,6 @@ class ConnectQuotaMonitor:
         
         return status
     
-    def send_alert(self, topic_arn, quota_info):
-        """Legacy send_alert method for backward compatibility."""
-        logger.warning("Using legacy send_alert method. Consider using monitor_and_alert() for consolidated alerts.")
-        
-        # Create temporary alert engine
-        alert_engine = AlertConsolidationEngine(self.sns_client, topic_arn, self.threshold_percentage or THRESHOLD_PERCENTAGE)
-        
-        # Convert legacy format to new format
-        violations = [{
-            'quota_code': quota_info.get('quota_info', {}).get('quota_code', 'unknown'),
-            'quota_name': quota_info.get('quota_info', {}).get('quota_name', 'Unknown Quota'),
-            'current_usage': quota_info.get('quota_info', {}).get('current_value', 0),
-            'quota_limit': quota_info.get('quota_info', {}).get('quota_value', 0),
-            'utilization_percentage': quota_info.get('quota_info', {}).get('utilization_percentage', 0),
-            'category': 'LEGACY'
-        }]
-        
-        # Send consolidated alert
-        return alert_engine._send_instance_consolidated_alert(
-            quota_info.get('instance_id', 'unknown'),
-            {'instance_alias': quota_info.get('instance_name', 'Unknown Instance')},
-            violations
-        )
-    
-    def get_service_quotas(self):
-        """Get Amazon Connect service quotas."""
-        quotas = []
-        try:
-            paginator = self.service_quotas_client.get_paginator('list_service_quotas')
-            
-            for page in paginator.paginate(ServiceCode='connect'):
-                quotas.extend(page['Quotas'])
-                
-            # Filter to include only the quotas we know how to monitor
-            monitorable_quotas = [q for q in quotas if q['QuotaCode'] in CONNECT_QUOTA_METRICS]
-            
-            logger.info(f"Found {len(monitorable_quotas)} monitorable Connect service quotas out of {len(quotas)} total")
-            return monitorable_quotas
-            
-        except ClientError as e:
-            error_code = e.response['Error']['Code']
-            error_msg = e.response['Error']['Message']
-            logger.error(f"Failed to list service quotas: {error_code} - {sanitize_log(error_msg)}")
-            if error_code == 'AccessDeniedException':
-                logger.error("Insufficient permissions to list service quotas. Check IAM permissions.")
-            raise
-    
     def get_quota_utilization(self, instance_id, quota_config, quota_code=None):
         """
         Enhanced quota utilization monitoring with comprehensive multi-service support and error handling.
@@ -1878,50 +1388,16 @@ class ConnectQuotaMonitor:
         Returns:
             Dictionary with utilization data or None if monitoring failed
         """
-        # Use enhanced error handling if available
-        if self.error_handler and ENHANCED_ERROR_HANDLING_AVAILABLE:
-            context = ErrorContext(
-                operation='get_quota_utilization',
-                service=quota_config.get('service', 'connect'),
-                resource_id=instance_id,
-                quota_code=quota_code,
-                execution_id=EXECUTION_ID
-            )
-            
-            try:
-                return self.error_handler.retry_with_backoff(
-                    self._get_quota_utilization_with_retry,
-                    context,
-                    instance_id,
-                    quota_config,
-                    quota_code
-                )
-            except Exception as e:
-                log_secure_error(
-                    f"Quota utilization monitoring failed after all retries",
-                    error=e,
-                    quota_code=quota_code,
-                    instance_id=instance_id
-                )
-                return None
-        else:
-            # Fallback to basic error handling
-            return self._get_quota_utilization_basic(instance_id, quota_config, quota_code)
-    
-    def _get_quota_utilization_with_retry(self, instance_id, quota_config, quota_code=None):
-        """Internal method for quota utilization with enhanced error handling."""
-        return self._process_quota_config(instance_id, quota_config, quota_code)
-    
+        return self._get_quota_utilization_basic(instance_id, quota_config, quota_code)
+
     def _get_quota_utilization_basic(self, instance_id, quota_config, quota_code=None):
-        """Basic quota utilization monitoring with fallback error handling."""
+        """Quota utilization monitoring with fallback error handling."""
         try:
             return self._process_quota_config(instance_id, quota_config, quota_code)
         except Exception as e:
-            log_secure_error(
-                f"Basic quota utilization monitoring failed",
-                error=e,
-                quota_code=quota_code,
-                instance_id=instance_id
+            logger.error(
+                f"Quota utilization monitoring failed for {quota_code} "
+                f"(instance {instance_id}): {sanitize_log(str(e))}"
             )
             return None
     
@@ -1961,10 +1437,6 @@ class ConnectQuotaMonitor:
         if scope == 'ACCOUNT' and instance_id:
             logger.debug(f"Skipping account-level quota {quota_name} - should be checked at account level")
             return None
-        
-        # Record service health for graceful degradation
-        if self.error_handler and hasattr(self.error_handler, 'degradation_manager'):
-            self.error_handler.degradation_manager.record_service_health(service, True)
         
         current_usage = 0
         quota_limit = default_limit  # Start with default, may be updated
@@ -2006,9 +1478,6 @@ class ConnectQuotaMonitor:
         # Handle monitoring failures
         if current_usage is None:
             logger.warning(f"Failed to get usage for quota {quota_name}")
-            # Record service as degraded
-            if self.error_handler and hasattr(self.error_handler, 'degradation_manager'):
-                self.error_handler.degradation_manager.record_service_health(service, False)
             return None
         
         # Calculate utilization percentage
@@ -2108,11 +1577,19 @@ class ConnectQuotaMonitor:
             # Build parameters for child API call
             child_params = {parent_key: parent_id}
             
-            # Count child resources
+            # Count child resources. A None result means the child pagination was
+            # truncated or failed; summing only the successful children would
+            # under-report the aggregate and hide a breach ("silently healthy").
+            # Propagate None so the whole quota is reported as unavailable instead.
             child_count = self._count_via_pagination_enhanced(service, api_name, child_response_key, child_params)
-            if child_count is not None:
-                total_count += child_count
-        
+            if child_count is None:
+                logger.error(
+                    f"Child count unavailable for parent {parent_id} in {service}.{api_name}; "
+                    f"aggregate is incomplete, reporting quota as unavailable"
+                )
+                return None
+            total_count += child_count
+
         return total_count
     
     def _monitor_via_cloudwatch(self, instance_id, metric_config):
@@ -2158,10 +1635,15 @@ class ConnectQuotaMonitor:
                 Statistics=[statistic]
             )
             
+            # Track which metric name actually produced the datapoints we use, so
+            # we can reject percentage-typed metrics below (they are not counts).
+            effective_metric_name = metric_name
+
             # If no data with primary metric name, try fallback
             if (not response or not response.get('Datapoints')) and metric_config.get('metric_name_fallback'):
                 fallback_name = metric_config['metric_name_fallback']
                 logger.info(f"No data for {metric_name}, trying fallback: {fallback_name}")
+                effective_metric_name = fallback_name
                 response = self.call_service_api(
                     'cloudwatch',
                     'get_metric_statistics',
@@ -2174,9 +1656,13 @@ class ConnectQuotaMonitor:
                     Statistics=[statistic]
                 )
             
-            # If still no data, try without MetricGroup dimension (backward compat)
+            # If still no data, try the PRIMARY metric without the MetricGroup
+            # dimension (backward compat). This re-queries metric_name, so reset
+            # effective_metric_name -- otherwise a stale percentage fallback name
+            # would cause the guard below to wrongly reject valid primary data.
             if (not response or not response.get('Datapoints')) and metric_group:
                 logger.info(f"No data for {metric_name} with MetricGroup={metric_group}, trying without MetricGroup dimension")
+                effective_metric_name = metric_name
                 dimensions_no_group = [d for d in dimensions if d['Name'] != 'MetricGroup']
                 response = self.call_service_api(
                     'cloudwatch',
@@ -2193,11 +1679,22 @@ class ConnectQuotaMonitor:
             if not response or not response.get('Datapoints'):
                 logger.debug(f"No CloudWatch data for metric {metric_name}")
                 return 0
-            
+
+            # Reject percentage-typed metrics: this path returns a raw count that the
+            # caller divides by the quota limit. Feeding a 0-100 percentage in here
+            # produces nonsense utilization (e.g. 80% -> 80/10 -> 800%, a false
+            # CRITICAL). A percentage metric is not a valid proxy for a count quota.
+            if effective_metric_name.lower().endswith(('percentage', 'percent')):
+                logger.warning(
+                    f"Ignoring percentage metric '{effective_metric_name}' for a count-based "
+                    f"quota; it cannot be used as a usage count. Treating usage as unavailable."
+                )
+                return 0
+
             # Get the most recent datapoint
             datapoints = sorted(response['Datapoints'], key=lambda x: x['Timestamp'], reverse=True)
             latest_value = datapoints[0].get(statistic, 0)
-            
+
             return int(latest_value)
             
         except Exception as e:
@@ -2206,57 +1703,70 @@ class ConnectQuotaMonitor:
     
     def _monitor_via_cloudwatch_api(self, instance_id, metric_config):
         """
-        Monitor API rate limits via CloudWatch API usage metrics.
-        Returns current usage (TPS) as integer.
-        Note: Actual quota limit will be fetched separately to get applied quota vs default.
+        Monitor API request-rate limits via CloudWatch API usage metrics.
+        Returns current usage in TPS (requests/second) as an integer.
+
+        Amazon Connect API request rates are published to the CloudWatch
+        ``AWS/Usage`` namespace as the ``CallCount`` metric with dimensions
+        Service=Connect, Type=API, Resource=<operation>, Class=None (the same
+        metric Service Quotas graphs via SERVICE_QUOTA()). The Connect throttling
+        quotas are per-account/per-Region, so no InstanceId dimension applies.
+        See: https://repost.aws/knowledge-center/cloudwatch-api-call-usage
+
+        Note (hard limitation): CloudWatch usage metrics have a minimum 1-minute
+        resolution, so a true per-second peak is not observable. We take the
+        busiest single minute over the lookback window and divide by 60 to get
+        the peak average TPS for that minute -- more conservative than averaging
+        the whole window, but it can still understate a sub-minute burst.
         """
         operation = metric_config.get('operation')
-        namespace = metric_config.get('namespace', 'AWS/Connect')
-        
+
         if not operation:
             logger.error("No operation specified for cloudwatch_api method")
             return None
-        
-        # Build dimensions for API metrics
+
+        # API usage lives in AWS/Usage, not AWS/Connect. The namespace field in
+        # the quota definition is not used for this method.
         dimensions = [
-            {'Name': 'Operation', 'Value': operation}
+            {'Name': 'Service', 'Value': 'Connect'},
+            {'Name': 'Class', 'Value': 'None'},
+            {'Name': 'Type', 'Value': 'API'},
+            {'Name': 'Resource', 'Value': operation},
         ]
-        
-        if metric_config.get('scope') == 'INSTANCE' and instance_id:
-            dimensions.append({
-                'Name': 'InstanceId',
-                'Value': instance_id
-            })
-        
-        # Get API call count from CloudWatch over last 5 minutes
+
+        # Look back 15 minutes and inspect per-minute call counts.
         end_time = datetime.now(timezone.utc)
-        start_time = end_time - timedelta(minutes=5)
-        
+        start_time = end_time - timedelta(minutes=15)
+
         try:
             response = self.call_service_api(
                 'cloudwatch',
                 'get_metric_statistics',
-                Namespace=namespace,
-                MetricName='APICallCount',
+                Namespace='AWS/Usage',
+                MetricName='CallCount',
                 Dimensions=dimensions,
                 StartTime=start_time,
                 EndTime=end_time,
-                Period=60,  # 1 minute periods for granular rate calculation
+                Period=60,  # 1-minute periods
                 Statistics=['Sum']
             )
-            
+
             if not response or not response.get('Datapoints'):
                 # No recent API calls detected
                 return 0
-            
-            # Calculate average rate per second over the period
-            total_calls = sum(dp.get('Sum', 0) for dp in response['Datapoints'])
-            rate_per_second = total_calls / 300  # 5 minutes = 300 seconds
-            
-            # Return as integer (rounded up to be conservative)
-            import math
-            return int(math.ceil(rate_per_second))
-            
+
+            # Peak calls in any single minute over the window, converted to an
+            # average per-second rate to compare against the per-second quota.
+            # Return the float rate -- do NOT ceil to an int. Connect rate limits
+            # can be fractional (e.g. SearchContacts = 0.5/s) or small (1-2/s), and
+            # ceil() would make the smallest observable non-zero rate 1 TPS, i.e. a
+            # single call in 15 min would read as 200% of a 0.5 limit -> false
+            # CRITICAL. Utilization is computed downstream as usage/limit*100.
+            peak_calls_per_minute = max(dp.get('Sum', 0) for dp in response['Datapoints'])
+            rate_per_second = peak_calls_per_minute / 60.0
+
+            return round(rate_per_second, 4)
+
         except Exception as e:
             logger.error(f"Error getting API rate for {operation}: {sanitize_log(str(e))}")
             return None
@@ -2289,16 +1799,86 @@ class ConnectQuotaMonitor:
                 return None, metric_config.get('default_limit', 0)
             
             quota_info = response['Quota']
-            current_usage = quota_info.get('UsageMetric', {}).get('MetricValue', 0)
-            quota_limit = quota_info.get('Value', metric_config.get('default_limit', 0))
-            
-            return int(current_usage), int(quota_limit)
-            
+            # Keep as float: Value is a double and some Connect rate quotas are
+            # fractional (e.g. 0.5). int() would truncate 0.5 -> 0, and the
+            # downstream `if quota_limit > 0` guard would then force 0% and mask a
+            # breach. Consistent with _extract_applied_quota_value (float()).
+            quota_limit = float(quota_info.get('Value', metric_config.get('default_limit', 0)))
+
+            # NOTE: UsageMetric is *metadata* describing which CloudWatch metric
+            # reflects usage (MetricNamespace/MetricName/MetricDimensions/
+            # MetricStatisticRecommendation) -- it does NOT carry a usage value.
+            # The previous code read a non-existent 'MetricValue' key, so every
+            # service_quotas quota reported 0 usage (0%) and never alerted. If a
+            # UsageMetric is present we query CloudWatch for the real usage; if
+            # not, usage is genuinely unavailable via Service Quotas -> return
+            # None (unknown) so the quota is skipped rather than falsely "0%".
+            usage_metric = quota_info.get('UsageMetric')
+            if usage_metric:
+                current_usage = self._query_usage_from_usage_metric(usage_metric)
+            else:
+                logger.debug(f"No UsageMetric for {quota_code}; usage not available via Service Quotas")
+                current_usage = None
+
+            return current_usage, quota_limit
+
         except Exception as e:
             logger.warning(f"Error getting quota from Service Quotas API: {sanitize_log(str(e))}")
             # Fall back to default limit
             return None, metric_config.get('default_limit', 0)
-    
+
+    def _query_usage_from_usage_metric(self, usage_metric):
+        """Query CloudWatch for current usage described by a ServiceQuota UsageMetric.
+
+        Returns the usage as an int, or None if no datapoints / on error.
+        """
+        namespace = usage_metric.get('MetricNamespace')
+        metric_name = usage_metric.get('MetricName')
+        if not namespace or not metric_name:
+            return None
+
+        # MetricDimensions is a {name: value} map; CloudWatch wants a list.
+        dimensions = [
+            {'Name': k, 'Value': v}
+            for k, v in (usage_metric.get('MetricDimensions') or {}).items()
+        ]
+        statistic = usage_metric.get('MetricStatisticRecommendation') or 'Maximum'
+
+        end_time = datetime.now(timezone.utc)
+        start_time = end_time - timedelta(minutes=15)
+        try:
+            response = self.call_service_api(
+                'cloudwatch',
+                'get_metric_statistics',
+                Namespace=namespace,
+                MetricName=metric_name,
+                Dimensions=dimensions,
+                StartTime=start_time,
+                EndTime=end_time,
+                Period=300,
+                Statistics=[statistic],
+            )
+            datapoints = (response or {}).get('Datapoints') or []
+            if not datapoints:
+                return None
+            # Most recent datapoint for the recommended statistic.
+            latest = sorted(datapoints, key=lambda x: x['Timestamp'], reverse=True)[0]
+            return int(latest.get(statistic, 0))
+        except Exception as e:
+            logger.warning(f"Error querying usage metric {namespace}/{metric_name}: {sanitize_log(str(e))}")
+            return None
+
+    @staticmethod
+    def _extract_applied_quota_value(response, quota_code):
+        """Return the applied quota Value from a get_service_quota response, or None."""
+        if response and 'Quota' in response:
+            applied_value = response['Quota'].get('Value')
+            if applied_value is not None:
+                applied_float = float(applied_value)
+                logger.debug(f"Retrieved applied quota for {quota_code}: {applied_float}")
+                return applied_float
+        return None
+
     def _get_actual_quota_limit(self, service, quota_code, instance_id=None, context_required=False):
         """
         Get the actual applied quota limit from Service Quotas API with caching.
@@ -2339,49 +1919,58 @@ class ConnectQuotaMonitor:
                 'QuotaCode': quota_code
             }
             
-            # Add instance context if required
+            # Add instance context only for quotas that support resource-level
+            # adjustability. Sending a ContextId for a non-resource-level (or
+            # non-adjustable) Connect quota raises NoSuchResourceException; we
+            # retry without it below rather than silently falling back to the
+            # hardcoded default.
+            used_context = False
             if context_required and instance_id:
                 context_id = f"arn:aws:connect:{self.region}:{self._get_account_id()}:instance/{instance_id}"
                 params['ContextId'] = context_id
+                used_context = True
                 logger.debug(f"Fetching context-aware quota for {quota_code} with context: {context_id}")
-            
+
             # Try to get the applied quota value
             response = self.call_service_api('service-quotas', 'get_service_quota', **params)
-            
-            if response and 'Quota' in response:
-                quota_info = response['Quota']
-                applied_value = quota_info.get('Value')
-                
-                if applied_value is not None:
-                    applied_float = float(applied_value)
-                    logger.debug(f"Retrieved applied quota for {quota_code}: {applied_float}")
-                    
-                    # Cache the result
-                    self._quota_limit_cache[cache_key] = (applied_float, datetime.now(timezone.utc))
-                    return applied_float
-            
+
+            applied_float = self._extract_applied_quota_value(response, quota_code)
+            if applied_float is not None:
+                self._quota_limit_cache[cache_key] = (applied_float, datetime.now(timezone.utc))
+                return applied_float
+
             # If we can't get the applied value, cache None and return None to use default
             logger.debug(f"Could not retrieve applied quota for {quota_code}, will use default")
             self._quota_limit_cache[cache_key] = (None, datetime.now(timezone.utc))
             return None
-            
+
         except ClientError as e:
             error_code = e.response['Error']['Code']
-            
-            # NoSuchResourceException means this quota doesn't have a service quota entry
-            # This is expected for some quotas that don't have L-codes or aren't in Service Quotas
-            if error_code == 'NoSuchResourceException':
+
+            # NoSuchResource/ResourceNotFound: the quota code exists but not for
+            # the (context) resource we asked about. If we sent a ContextId, retry
+            # once WITHOUT it to get the account/Region-level applied value before
+            # giving up -- otherwise we would silently use the hardcoded default
+            # and miss any customer quota increase.
+            if error_code in ('NoSuchResourceException', 'ResourceNotFoundException'):
+                if used_context:
+                    logger.debug(f"Context-aware lookup for {quota_code} failed ({error_code}); retrying without ContextId")
+                    try:
+                        response = self.call_service_api(
+                            'service-quotas', 'get_service_quota',
+                            ServiceCode=service, QuotaCode=quota_code
+                        )
+                        applied_float = self._extract_applied_quota_value(response, quota_code)
+                        if applied_float is not None:
+                            self._quota_limit_cache[cache_key] = (applied_float, datetime.now(timezone.utc))
+                            return applied_float
+                    except ClientError as retry_err:
+                        logger.debug(f"Retry without context for {quota_code} failed: {retry_err.response['Error']['Code']}")
                 logger.debug(f"Quota {quota_code} not found in Service Quotas API (expected for some quotas)")
                 # Cache this negative result to avoid repeated API calls
                 self._quota_limit_cache[cache_key] = (None, datetime.now(timezone.utc))
                 return None
-            
-            # ResourceNotFoundException - similar to above
-            elif error_code == 'ResourceNotFoundException':
-                logger.debug(f"Quota {quota_code} resource not found in Service Quotas API")
-                self._quota_limit_cache[cache_key] = (None, datetime.now(timezone.utc))
-                return None
-            
+
             # AccessDeniedException - permission issue
             elif error_code == 'AccessDeniedException':
                 logger.warning(f"Access denied when fetching quota {quota_code} - check IAM permissions")
@@ -2409,8 +1998,6 @@ class ConnectQuotaMonitor:
             if service == 'connect':
                 params['InstanceId'] = instance_id
             elif service == 'connectcases':
-                params['instanceId'] = instance_id
-            elif service == 'wisdom':
                 params['instanceId'] = instance_id
             elif service == 'connectcampaigns':
                 params['instanceId'] = instance_id
@@ -2453,19 +2040,6 @@ class ConnectQuotaMonitor:
                 'list_fields': 'fields',
                 'list_templates': 'templates'
             },
-            'customer-profiles': {
-                'list_domains': 'Items',
-                'list_profile_object_types': 'Items'
-            },
-            'voice-id': {
-                'list_domains': 'DomainSummaries',
-                'list_speakers': 'SpeakerSummaries',
-                'list_fraudsters': 'FraudsterSummaries'
-            },
-            'wisdom': {
-                'list_knowledge_bases': 'knowledgeBaseSummaries',
-                'list_contents': 'contentSummaries'
-            },
             'connectcampaigns': {
                 'list_campaigns': 'campaignSummaryList'
             }
@@ -2474,107 +2048,90 @@ class ConnectQuotaMonitor:
         return response_keys.get(service, {}).get(api_name)
     
     def _count_via_pagination_enhanced(self, service, api_name, response_key, params):
-        """Count resources using enhanced pagination with performance optimization."""
+        """Count resources across a paginated list API."""
         try:
-            # Use performance optimizer if available
-            if self.performance_optimizer:
-                operation_name = f"{service}_{api_name}_count"
-                
-                def api_call(**api_params):
-                    return self.call_service_api(service, api_name, **api_params)
-                
-                return self.performance_optimizer.optimize_api_pagination(
-                    api_call=api_call,
-                    response_key=response_key,
-                    api_params=params,
-                    operation_name=operation_name,
-                    count_only=True
-                )
-            
-            # Fallback to original implementation
             total_count = 0
             next_token = None
-            max_pages = 100  # Prevent infinite loops
+            # Safety bound to prevent infinite loops. Set well above any realistic
+            # Connect resource count so we do not truncate legitimate data.
+            max_pages = 500
             page_count = 0
-            
-            while page_count < max_pages:
-                # Add pagination token if available
+            truncated = False
+
+            while True:
+                # All Connect/related list APIs use the 'NextToken' pagination key.
                 api_params = params.copy()
                 if next_token:
-                    # Different services use different pagination token names
-                    if service in ['connectcases', 'customer-profiles', 'voice-id']:
-                        api_params['NextToken'] = next_token
-                    else:
-                        api_params['NextToken'] = next_token
-                
+                    api_params['NextToken'] = next_token
+
                 # Call the API
                 response = self.call_service_api(service, api_name, **api_params)
                 if not response:
                     logger.warning(f"No response from {service}.{api_name}")
                     break
-                
+
                 # Count items in this page
                 items = response.get(response_key, [])
                 total_count += len(items)
-                
+
                 # Check for next page
                 next_token = response.get('NextToken')
                 if not next_token:
                     break
-                
+
                 page_count += 1
-            
-            if page_count >= max_pages:
-                logger.warning(f"Reached maximum pages ({max_pages}) for {service}.{api_name}")
-            
+                if page_count >= max_pages:
+                    truncated = True
+                    break
+
+            if truncated:
+                # Returning the partial count here would understate usage and could
+                # hide a quota breach ("silently healthy"). Return None so the quota
+                # is reported as unknown/degraded rather than falsely under-utilized.
+                logger.error(
+                    f"Pagination cap ({max_pages} pages) hit for {service}.{api_name}; "
+                    f"usage count is incomplete and will be reported as unavailable"
+                )
+                return None
+
             return total_count
-            
+
         except Exception as e:
             logger.error(f"Error counting via pagination for {service}.{api_name}: {sanitize_log(str(e))}")
             return None
     
     def _get_all_resources(self, service, api_name, response_key, params):
-        """Get all resources from a paginated API with performance optimization."""
+        """Get all resources from a paginated list API."""
         try:
-            # Use performance optimizer if available
-            if self.performance_optimizer:
-                operation_name = f"{service}_{api_name}_all"
-                
-                def api_call(**api_params):
-                    return self.call_service_api(service, api_name, **api_params)
-                
-                return self.performance_optimizer.optimize_api_pagination(
-                    api_call=api_call,
-                    response_key=response_key,
-                    api_params=params,
-                    operation_name=operation_name,
-                    count_only=False
-                )
-            
-            # Fallback to original implementation
             all_resources = []
             next_token = None
-            max_pages = 100
+            max_pages = 500  # Safety bound; set high enough not to truncate real data
             page_count = 0
-            
-            while page_count < max_pages:
+
+            while True:
                 api_params = params.copy()
                 if next_token:
                     api_params['NextToken'] = next_token
-                
+
                 response = self.call_service_api(service, api_name, **api_params)
                 if not response:
                     break
-                
+
                 items = response.get(response_key, [])
                 all_resources.extend(items)
-                
+
                 next_token = response.get('NextToken')
                 if not next_token:
                     break
-                
+
                 page_count += 1
-            
+                if page_count >= max_pages:
+                    logger.error(
+                        f"Pagination cap ({max_pages} pages) hit for {service}.{api_name}; "
+                        f"resource list is incomplete ({len(all_resources)} so far)"
+                    )
+                    break
+
             return all_resources
             
         except Exception as e:
@@ -2615,6 +2172,15 @@ class ConnectQuotaMonitor:
         """Get the current AWS account ID."""
         try:
             if not hasattr(self, '_account_id'):
+                # Guard against re-entrancy: the ARN fallback below calls
+                # get_connect_instances(), whose metadata enrichment calls
+                # _get_account_id() again. Without this guard that recurses
+                # until (or past) the recursion limit. Returning 'unknown' on
+                # re-entry breaks the cycle; the outer call still resolves the
+                # real value from the instance ARN.
+                if getattr(self, '_account_id_resolving', False):
+                    return 'unknown'
+
                 # Get account ID from STS
                 sts_client = self.get_service_client('sts')
                 if sts_client:
@@ -2622,7 +2188,11 @@ class ConnectQuotaMonitor:
                     self._account_id = response.get('Account')
                 else:
                     # Fallback: extract from instance ARN if available
-                    instances = self.get_connect_instances()
+                    self._account_id_resolving = True
+                    try:
+                        instances = self.get_connect_instances()
+                    finally:
+                        self._account_id_resolving = False
                     if instances:
                         instance_arn = instances[0].get('Arn', '')
                         # ARN format: arn:aws:connect:region:account-id:instance/instance-id
@@ -3433,13 +3003,13 @@ class AlertConsolidationEngine:
 
             for violation in category_violations:
                 message_lines.extend([
-                    f"╔═══════════════════════════════════════════════════════════",
+                    "╔═══════════════════════════════════════════════════════════",
                     f"║ ⚠️  ALERT: {violation['quota_name'].upper()}",
-                    f"║",
+                    "║",
                     f"║    ▶ CURRENT USAGE: {violation['current_usage']:,}",
                     f"║    ▶ QUOTA LIMIT:   {violation['quota_limit']:,}",
                     f"║    ▶ UTILIZATION:   {violation['utilization_percentage']:.1f}% ⚠️  ⚠️  ⚠️",
-                    f"╚═══════════════════════════════════════════════════════════",
+                    "╚═══════════════════════════════════════════════════════════",
                     ""
                 ])
 
@@ -3470,7 +3040,10 @@ class AlertConsolidationEngine:
                 
                 for quota in category_quotas:
                     utilization = quota.get('utilization_percentage', 0)
-                    status_icon = "⚠️ " if utilization > self.threshold_percentage else "✅"
+                    # Use >= to match the violation-detection threshold, so a quota
+                    # at exactly the threshold isn't flagged as a violation yet shown
+                    # with a ✅ in the same alert.
+                    status_icon = "⚠️ " if utilization >= self.threshold_percentage else "✅"
                     
                     message_lines.extend([
                         f"{status_icon} {quota['quota_name']}",
@@ -3531,19 +3104,40 @@ class AlertConsolidationEngine:
             sms_message = f"Connect Alert: {message_data['violations_count']} quota violation(s) detected"
             if message_data['scope'] == 'INSTANCE':
                 sms_message += f" for {message_data.get('instance_alias', 'instance')}"
-            
-            # Send structured message
-            response = self.sns_client.publish(
-                TopicArn=self.topic_arn,
-                Message=json.dumps({
+
+            # SNS Subject must be ASCII, single-line, and <= 100 characters, or the
+            # publish is rejected. Collapse newlines and truncate defensively.
+            safe_subject = ' '.join(str(subject).split())[:100]
+
+            # Send structured message. NOTE: with MessageStructure='json', every key
+            # other than "default" must be a valid SNS transport protocol name.
+            # "json" is not a protocol, so including it makes SNS reject the whole
+            # publish (InvalidParameter) and no alert is delivered. The structured
+            # payload is carried as a message attribute instead (read by SQS/Lambda
+            # subscribers; email/SMS only see the Message body below).
+            publish_kwargs = {
+                'TopicArn': self.topic_arn,
+                'Message': json.dumps({
                     "default": human_message,
                     "email": human_message,
                     "sms": sms_message,
-                    "json": json.dumps(message_data)
                 }),
-                Subject=subject,
-                MessageStructure='json'
-            )
+                'Subject': safe_subject,
+                'MessageStructure': 'json',
+            }
+            # SNS caps Message + all attributes at 256 KB. The human-readable body
+            # already carries the alert; only attach the structured payload as an
+            # attribute if it comfortably fits, else drop it (a truncated JSON blob
+            # is useless to a consumer) rather than losing the whole alert.
+            structured = json.dumps(message_data)
+            if len(structured.encode('utf-8')) <= 200 * 1024:
+                publish_kwargs['MessageAttributes'] = {
+                    "structured_data": {"DataType": "String", "StringValue": structured}
+                }
+            else:
+                logger.warning("structured_data payload too large for SNS attribute; omitting it from the alert")
+
+            response = self.sns_client.publish(**publish_kwargs)
             
             logger.info(f"Consolidated alert sent successfully: {subject}")
             logger.debug(f"SNS Message ID: {response.get('MessageId')}")
@@ -3568,7 +3162,7 @@ class AlertConsolidationEngine:
                 return False, "Invalid SNS topic ARN format"
             
             # Test topic accessibility
-            response = self.sns_client.get_topic_attributes(TopicArn=self.topic_arn)
+            self.sns_client.get_topic_attributes(TopicArn=self.topic_arn)
             
             # Check if topic has subscriptions
             subscriptions = self.sns_client.list_subscriptions_by_topic(TopicArn=self.topic_arn)
@@ -3585,252 +3179,6 @@ class AlertConsolidationEngine:
         except Exception as e:
             return False, f"SNS validation error: {sanitize_log(str(e))}"
 
-    def send_alert(self, topic_arn, quota_info):
-        """Legacy method for backward compatibility."""
-        logger.warning("Using legacy send_alert method. Consider using AlertConsolidationEngine for better consolidation.")
-        
-        # Convert legacy format to new format
-        violations = [{
-            'quota_code': quota_info['quota_info']['quota_code'],
-            'quota_name': quota_info['quota_info']['quota_name'],
-            'current_usage': quota_info['quota_info']['current_value'],
-            'quota_limit': quota_info['quota_info']['quota_value'],
-            'utilization_percentage': quota_info['quota_info']['utilization_percentage'],
-            'category': 'LEGACY'
-        }]
-        
-        # Use new consolidation engine
-        temp_engine = AlertConsolidationEngine(self.sns_client, topic_arn, self.threshold_percentage)
-        return temp_engine._send_instance_consolidated_alert(
-            quota_info['instance_id'],
-            {'instance_alias': quota_info['instance_name']},
-            violations
-        )
-
-def validate_sns_topic(sns_client, topic_arn):
-    """Validate that the SNS topic exists and is accessible."""
-    if not topic_arn:
-        return False
-        
-    try:
-        sns_client.get_topic_attributes(TopicArn=topic_arn)
-        return True
-    except ClientError as e:
-        error_code = e.response['Error']['Code']
-        logger.error(f"SNS topic validation failed: {error_code}")
-        return False
-
-def save_report_to_s3(s3_client, bucket, report_data):
-    """Save report data to S3 bucket."""
-    try:
-        # Generate keys for the report
-        timestamp = datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')
-        date_prefix = datetime.now(timezone.utc).strftime('%Y/%m/%d')
-        report_key = f"connect-reports/{date_prefix}/connect_quota_report_{timestamp}.json"
-        latest_key = "connect-reports/latest/connect_quota_report.json"
-        
-        # Convert to JSON
-        json_data = json.dumps(report_data, default=str)
-        
-        # Upload timestamped report
-        s3_client.put_object(
-            Bucket=bucket,
-            Key=report_key,
-            Body=json_data,
-            ContentType='application/json'
-        )
-        
-        # Upload to latest location for easy access
-        s3_client.put_object(
-            Bucket=bucket,
-            Key=latest_key,
-            Body=json_data,
-            ContentType='application/json'
-        )
-        
-        logger.info(f"Report saved to S3: s3://{bucket}/{report_key}")
-        return f"s3://{bucket}/{report_key}"
-        
-    except ClientError as e:
-        logger.error(f"Error saving report to S3: {sanitize_log(str(e))}")
-        return None
-
-def save_report_to_dynamodb(dynamodb_client, table_name, report_data):
-    """Save report summary to DynamoDB table."""
-    try:
-        # Create a summary item for this execution
-        timestamp = datetime.now(timezone.utc).isoformat()
-        
-        # Basic attributes
-        item = {
-            'id': {'S': f"report_{EXECUTION_ID}"},
-            'timestamp': {'S': timestamp},
-            'execution_id': {'S': EXECUTION_ID},
-            'region': {'S': report_data.get('region', 'unknown')},
-            'threshold_percentage': {'N': str(report_data.get('threshold_percentage', 80))},
-            'alert_count': {'N': str(report_data.get('alert_count', 0))},
-            'instance_count': {'N': str(len(set([r.get('instance_id') for r in report_data.get('results', [])])))}
-        }
-        
-        # Add summary of alerts
-        alerts = []
-        for result in report_data.get('results', []):
-            if result.get('exceeds_threshold', False):
-                alerts.append({
-                    'instance_id': result.get('instance_id', 'unknown'),
-                    'instance_name': result.get('instance_name', 'unknown'),
-                    'quota_name': result.get('quota_info', {}).get('quota_name', 'unknown'),
-                    'utilization': result.get('quota_info', {}).get('utilization_percentage', 0)
-                })
-        
-        if alerts:
-            item['alerts'] = {'S': json.dumps(alerts, default=str)}
-        
-        # Store full report data as a compressed JSON string
-        item['report_data'] = {'S': json.dumps(report_data, default=str)}
-        
-        # Put item in DynamoDB
-        dynamodb_client.put_item(
-            TableName=table_name,
-            Item=item
-        )
-        
-        logger.info(f"Report summary saved to DynamoDB table {table_name}")
-        return True
-        
-    except ClientError as e:
-        logger.error(f"Error saving report to DynamoDB: {sanitize_log(str(e))}")
-        return False
-
-def cli_main():
-    """Main function to run the quota monitor."""
-    try:
-        # Log execution start with unique ID for traceability
-        logger.info(f"Starting Connect Quota Monitor execution {EXECUTION_ID}")
-        
-        # Get configuration from environment or use defaults
-        region = os.environ.get('AWS_REGION')
-        profile = os.environ.get('AWS_PROFILE')
-        sns_topic_arn = os.environ.get('ALERT_SNS_TOPIC_ARN')
-        custom_threshold = os.environ.get('THRESHOLD_PERCENTAGE')
-        s3_bucket = os.environ.get('S3_BUCKET')
-        use_dynamodb = os.environ.get('USE_DYNAMODB', 'false').lower() == 'true'
-        dynamodb_table = os.environ.get('DYNAMODB_TABLE', 'ConnectQuotaMonitor')
-        
-        # Validate threshold if provided
-        threshold = THRESHOLD_PERCENTAGE
-        if custom_threshold:
-            try:
-                threshold_value = int(custom_threshold)
-                if 1 <= threshold_value <= 99:
-                    threshold = threshold_value
-                else:
-                    logger.warning(f"Invalid threshold value {threshold_value}, must be between 1-99. Using default {THRESHOLD_PERCENTAGE}%")
-            except ValueError:
-                logger.warning(f"Invalid threshold format: {custom_threshold}. Using default {THRESHOLD_PERCENTAGE}%")
-        
-        # Initialize the monitor with proper error handling
-        try:
-            monitor = ConnectQuotaMonitor(
-                region_name=region, 
-                profile_name=profile,
-                s3_bucket=s3_bucket,
-                use_dynamodb=use_dynamodb,
-                dynamodb_table=dynamodb_table
-            )
-        except Exception as e:
-            logger.error(f"Failed to initialize ConnectQuotaMonitor: {sanitize_log(str(e))}")
-            sys.exit(1)
-        
-        # Validate SNS topic if provided
-        if sns_topic_arn:
-            if not validate_sns_topic(monitor.sns_client, sns_topic_arn):
-                logger.warning(f"SNS topic validation failed for {sanitize_log(sns_topic_arn)}. Alerts will not be sent.")
-                sns_topic_arn = None
-        
-        # Check all quotas with proper error handling
-        try:
-            results = monitor.monitor_and_store(sns_topic_arn, threshold)
-        except Exception as e:
-            logger.error(f"Failed to monitor quotas: {sanitize_log(str(e))}")
-            sys.exit(1)
-        
-        # Print summary with secure output handling
-        print(f"\nConnect Service Quota Utilization Summary:")
-        print(f"{'Instance':<20} {'Quota':<40} {'Usage':<10} {'Limit':<10} {'Utilization':<10}")
-        print("-" * 90)
-        
-        # Results are already processed with alerts and storage
-        # Print summary
-        print(f"\nConnect Service Quota Monitoring Summary:")
-        print(f"Instances monitored: {results.get('instances_monitored', 0)}")
-        print(f"Total quotas checked: {results.get('total_quotas_checked', 0)}")
-        print(f"Violations found: {results.get('violations_found', 0)}")
-        print(f"Alerts sent: {results.get('alert_results', {}).get('alerts_sent', 0)}")
-        
-        # Add metadata to results for reporting
-        report_data = {
-            'execution_id': EXECUTION_ID,
-            'timestamp': datetime.now(timezone.utc).isoformat(),
-            'region': region or 'default',
-            'threshold_percentage': threshold,
-            'monitoring_results': results,
-            'alert_count': results.get('alert_results', {}).get('alerts_sent', 0)
-        }
-        
-        # Option 1: Save to S3 if configured
-        report_location = None
-        if s3_bucket and monitor.s3_client:
-            report_location = save_report_to_s3(monitor.s3_client, s3_bucket, report_data)
-            print(f"\nDetailed report saved to {report_location}")
-            
-        # Option 2: Save to DynamoDB if configured
-        if use_dynamodb and monitor.dynamodb_client and dynamodb_table:
-            save_report_to_dynamodb(monitor.dynamodb_client, dynamodb_table, report_data)
-            print(f"\nReport summary saved to DynamoDB table {dynamodb_table}")
-            
-        # Option 3: Fall back to local file storage
-        if not report_location:
-            # Create reports directory if it doesn't exist
-            os.makedirs('reports', exist_ok=True)
-            
-            # Save results to file with timestamp for historical tracking
-            timestamp = datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')
-            report_file = f'reports/connect_quota_report_{timestamp}.json'
-            
-            with open(report_file, 'w') as f:
-                json.dump(report_data, f, indent=2, default=str)
-
-            # Also save to the standard location for backward compatibility
-            with open('connect_quota_report.json', 'w') as f:
-                json.dump(report_data, f, indent=2, default=str)
-
-            print(f"\nDetailed report saved to {report_file}")
-            
-            # Generate HTML report automatically
-            try:
-                import quota_report_to_html
-                html_file = report_file.replace('.json', '.html')
-                html_content = quota_report_to_html.generate_html(report_data)
-                with open(html_file, 'w') as f:
-                    f.write(html_content)
-                print(f"HTML dashboard generated: {html_file}")
-            except Exception as e:
-                logger.warning(f"Failed to generate HTML report: {str(e)}")
-        
-        if results.get('violations_found', 0) > 0:
-            print(f"\nWARNING: {results.get('violations_found', 0)} quotas exceeded the {threshold}% threshold!")
-            
-        # Log execution completion
-        logger.info(f"Connect Quota Monitor execution {EXECUTION_ID} completed successfully")
-        
-    except Exception as e:
-        logger.error(f"Unhandled exception in main: {sanitize_log(str(e))}")
-        sys.exit(1)
-
-if __name__ == "__main__":
-    cli_main()
-
 def main(event=None, context=None):
     """
     Enhanced Lambda handler function with comprehensive error handling and monitoring.
@@ -3846,101 +3194,29 @@ def main(event=None, context=None):
     - Graceful degradation for partial service failures
     - Detailed error logging with sanitized data
     """
-    # Initialize enhanced error handler with circuit breaker configuration
-    error_handler = None
-    if ENHANCED_ERROR_HANDLING_AVAILABLE:
-        from enhanced_error_handling import CircuitBreakerConfig
-        
-        dlq_url = os.environ.get('DLQ_URL')
-        
-        # Configure circuit breaker based on environment or use defaults
-        circuit_breaker_config = CircuitBreakerConfig(
-            failure_threshold=int(os.environ.get('CIRCUIT_BREAKER_FAILURE_THRESHOLD', '5')),
-            recovery_timeout=int(os.environ.get('CIRCUIT_BREAKER_RECOVERY_TIMEOUT', '60')),
-            success_threshold=int(os.environ.get('CIRCUIT_BREAKER_SUCCESS_THRESHOLD', '3')),
-            monitoring_window=int(os.environ.get('CIRCUIT_BREAKER_MONITORING_WINDOW', '300'))
-        )
-        
-        error_handler = EnhancedErrorHandler(
-            dlq_url=dlq_url, 
-            execution_id=EXECUTION_ID,
-            circuit_breaker_config=circuit_breaker_config
-        )
-    
     try:
         # Parse event to determine invocation type
         event = event or {}
         invocation_type = event.get('invocation_type', 'monitoring')
-        
-        if ENHANCED_SECURITY_AVAILABLE:
-            log_secure_info(f"Starting Connect Quota Monitor execution {EXECUTION_ID}")
-            log_secure_info(f"Invocation type: {invocation_type}")
-        else:
-            logger.info(f"Starting Connect Quota Monitor execution {EXECUTION_ID}")
-            logger.info(f"Invocation type: {invocation_type}")
-        
-        # Get and validate environment variables with error handling
-        try:
-            threshold = int(CONFIG['threshold_percentage'])
-            sns_topic_arn = os.environ.get('ALERT_SNS_TOPIC_ARN')
-            s3_bucket = CONFIG['s3_bucket']
-            use_dynamodb = CONFIG['use_dynamodb'].lower() == 'true'
-            dynamodb_table = CONFIG['dynamodb_table']
-        except (ValueError, KeyError) as e:
-            if error_handler:
-                context = ErrorContext(
-                    operation='configuration_validation',
-                    service='lambda',
-                    execution_id=EXECUTION_ID
-                )
-                error_handler.handle_error(e, context)
-            raise ValueError(f"Invalid configuration parameters: {sanitize_log(str(e))}")
-        
-        # Log configuration with sanitization
+
+        logger.info(f"Starting Connect Quota Monitor execution {EXECUTION_ID}")
+        logger.info(f"Invocation type: {invocation_type}")
+
+        # Get environment-driven configuration
+        threshold = _coerce_threshold(CONFIG['threshold_percentage'])
+        sns_topic_arn = os.environ.get('ALERT_SNS_TOPIC_ARN')
+        s3_bucket = CONFIG['s3_bucket']
+        use_dynamodb = CONFIG['use_dynamodb'].lower() == 'true'
+        dynamodb_table = CONFIG['dynamodb_table']
+
         config_info = f"threshold={threshold}%, SNS={bool(sns_topic_arn)}, S3={bool(s3_bucket)}, DynamoDB={use_dynamodb}"
-        if ENHANCED_SECURITY_AVAILABLE:
-            log_secure_info(f"Configuration: {config_info}")
-        else:
-            logger.info(f"Configuration: {sanitize_log(config_info)}")
-        
-        # Initialize performance optimizer if available
-        performance_optimizer = None
-        if PERFORMANCE_OPTIMIZER_AVAILABLE:
-            # Create performance optimizer with Lambda-optimized settings
-            cache_config = CacheConfig(
-                max_size=int(os.environ.get('CACHE_MAX_SIZE', '500')),
-                ttl_seconds=int(os.environ.get('CACHE_TTL_SECONDS', '300')),
-                enable_memory_cache=True
-            )
-            parallel_config = ParallelConfig(
-                max_workers=min(int(os.environ.get('MAX_PARALLEL_WORKERS', '5')), os.cpu_count() or 1),
-                enable_parallel_instances=os.environ.get('ENABLE_PARALLEL_INSTANCES', 'true').lower() == 'true',
-                enable_parallel_quotas=os.environ.get('ENABLE_PARALLEL_QUOTAS', 'true').lower() == 'true',
-                batch_size=int(os.environ.get('PARALLEL_BATCH_SIZE', '10')),
-                timeout_seconds=int(os.environ.get('PARALLEL_TIMEOUT_SECONDS', '240'))
-            )
-            pagination_config = PaginationConfig(
-                max_pages_per_api=int(os.environ.get('MAX_PAGES_PER_API', '50')),
-                items_per_page=int(os.environ.get('ITEMS_PER_PAGE', '100')),
-                enable_streaming=os.environ.get('ENABLE_STREAMING', 'true').lower() == 'true',
-                memory_threshold_mb=int(os.environ.get('MEMORY_THRESHOLD_MB', '200')),
-                enable_early_termination=os.environ.get('ENABLE_EARLY_TERMINATION', 'true').lower() == 'true'
-            )
-            
-            performance_optimizer = PerformanceOptimizer(
-                cache_config=cache_config,
-                parallel_config=parallel_config,
-                pagination_config=pagination_config
-            )
-            logger.info("Performance optimizer initialized with environment-based configuration")
-        
-        # Initialize the monitor with error handler and performance optimizer
+        logger.info(f"Configuration: {sanitize_log(config_info)}")
+
+        # Initialize the monitor
         monitor = ConnectQuotaMonitor(
             s3_bucket=s3_bucket if s3_bucket else None,
             use_dynamodb=use_dynamodb,
             dynamodb_table=dynamodb_table if use_dynamodb else None,
-            error_handler=error_handler,  # Pass error handler to monitor
-            performance_optimizer=performance_optimizer  # Pass performance optimizer to monitor
         )
         
         # Handle different invocation types
@@ -4051,92 +3327,28 @@ def main(event=None, context=None):
                         'Performance optimization'
                     ]
                 }
-                
-                # Add performance summary if optimizer is available
-                if performance_optimizer:
-                    performance_summary = performance_optimizer.get_performance_summary()
-                    response_data['performance_metrics'] = {
-                        'total_operations': performance_summary['total_operations'],
-                        'cache_hit_rate': performance_summary['cache_stats']['hit_rate_percentage'],
-                        'memory_usage_mb': performance_summary['memory_status']['current_memory_mb'],
-                        'recommendations': performance_summary['recommendations']
-                    }
-                    
-                    # Log performance summary
-                    logger.info(f"Performance Summary - Operations: {performance_summary['total_operations']}, "
-                              f"Cache Hit Rate: {performance_summary['cache_stats']['hit_rate_percentage']}%, "
-                              f"Memory Usage: {performance_summary['memory_status']['current_memory_mb']}MB")
-                
+
                 return {
                     'statusCode': 200,
                     'body': json.dumps(response_data)
                 }
-        
-        # Include error handling summary in successful responses
-        if error_handler:
-            error_summary = error_handler.get_error_summary()
-            if error_summary['error_statistics']['total_errors'] > 0:
-                # Add error summary to response for monitoring
-                results['error_handling_summary'] = error_summary
-        
+
         return {
             'statusCode': 200,
             'body': json.dumps(results, default=str)
         }
-        
+
     except Exception as e:
-        # Enhanced error handling for main execution errors
-        if error_handler:
-            context = ErrorContext(
-                operation='lambda_execution',
-                service='lambda',
-                execution_id=EXECUTION_ID
-            )
-            error_details = error_handler.handle_error(e, context)
-            
-            # Get comprehensive error summary
-            error_summary = error_handler.get_error_summary()
-            
-            # Check if execution can continue with degraded services
-            can_continue, unavailable_services = error_handler.degradation_manager.can_continue_execution()
-            
-            error_response = {
-                'error': 'Lambda execution error',
+        error_msg = f"Error in Lambda execution: {sanitize_log(str(e))}"
+        logger.error(error_msg)
+        return {
+            'statusCode': 500,
+            'body': json.dumps({
+                'error': 'Internal server error',
+                'message': error_msg,
                 'execution_id': EXECUTION_ID,
-                'error_category': error_details.category.value,
-                'error_severity': error_details.severity.value,
-                'sanitized_message': error_details.sanitized_message,
-                'can_continue_with_degradation': can_continue,
-                'unavailable_critical_services': unavailable_services,
-                'error_handling_summary': error_summary,
-                'message': 'Check CloudWatch logs and DLQ for detailed error information'
-            }
-            
-            # Determine status code based on error severity
-            status_code = 500
-            if error_details.severity in [ErrorSeverity.LOW, ErrorSeverity.INFO]:
-                status_code = 200  # Partial success
-            elif error_details.severity == ErrorSeverity.MEDIUM:
-                status_code = 207  # Multi-status
-            
-            return {
-                'statusCode': status_code,
-                'body': json.dumps(error_response, default=str)
-            }
-        else:
-            # Fallback error handling
-            error_msg = f"Error in Lambda execution: {sanitize_log(str(e))}"
-            logger.error(error_msg)
-            
-            return {
-                'statusCode': 500,
-                'body': json.dumps({
-                    'error': 'Internal server error',
-                    'message': error_msg,
-                    'execution_id': EXECUTION_ID,
-                    'enhanced_error_handling': False
-                })
-            }
+            })
+        }
 
 # Lambda handler alias for AWS Lambda
 lambda_handler = main

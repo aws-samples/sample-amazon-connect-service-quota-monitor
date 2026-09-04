@@ -15,7 +15,7 @@ Usage:
 import sys
 import os
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from collections import defaultdict
 
 # Add parent directory to path to import lambda_function
@@ -136,7 +136,7 @@ class QuotaValidator:
             if response and 'Quota' in response:
                 quota_info = response['Quota']
                 result['status'] = 'valid'
-                result['details'].append(f"✅ Quota exists in Service Quotas API")
+                result['details'].append("✅ Quota exists in Service Quotas API")
                 result['details'].append(f"   Service: {service}")
                 result['details'].append(f"   Default Value: {quota_info.get('Value', 'N/A')}")
                 result['details'].append(f"   Adjustable: {quota_info.get('Adjustable', False)}")
@@ -158,15 +158,15 @@ class QuotaValidator:
             
             # Categorize the error
             if 'NoSuchResourceException' in error_msg:
-                result['errors'].append(f"❌ Quota code not found in Service Quotas API")
+                result['errors'].append("❌ Quota code not found in Service Quotas API")
                 result['errors'].append(f"   This L-code may be invalid or not available in {service}")
             elif 'ResourceNotFoundException' in error_msg:
-                result['errors'].append(f"❌ Resource not found")
-                result['errors'].append(f"   Quota may not exist or context is invalid")
+                result['errors'].append("❌ Resource not found")
+                result['errors'].append("   Quota may not exist or context is invalid")
             elif 'AccessDenied' in error_msg:
-                result['errors'].append(f"⚠️  Access denied - check IAM permissions")
+                result['errors'].append("⚠️  Access denied - check IAM permissions")
             elif 'context' in error_msg.lower():
-                result['errors'].append(f"❌ Context-related error")
+                result['errors'].append("❌ Context-related error")
                 result['errors'].append(f"   May need instance context: {context_required}")
             else:
                 result['errors'].append(f"❌ Error: {error_msg}")
@@ -188,7 +188,6 @@ class QuotaValidator:
             'errors': []
         }
         
-        method = quota_config.get('method')
         scope = quota_config.get('scope', 'INSTANCE')
         
         # Determine which instance ID to use
@@ -210,7 +209,7 @@ class QuotaValidator:
             
             if utilization is not None:
                 result['status'] = 'valid'
-                result['details'].append(f"✅ Monitoring method works")
+                result['details'].append("✅ Monitoring method works")
                 result['details'].append(f"   Current Usage: {utilization.get('current_usage', 'N/A')}")
                 result['details'].append(f"   Quota Limit: {utilization.get('quota_limit', 'N/A')}")
                 result['details'].append(f"   Utilization: {utilization.get('utilization_percentage', 0):.1f}%")
@@ -235,7 +234,7 @@ class QuotaValidator:
         print("=" * 80)
         print("CONNECT QUOTA VALIDATION REPORT")
         print("=" * 80)
-        print(f"Timestamp: {datetime.utcnow().isoformat()}")
+        print(f"Timestamp: {datetime.now(timezone.utc).isoformat()}")
         print(f"Region: {self.monitor.region if self.monitor else 'Unknown'}")
         print(f"Total Quotas to Validate: {len(ENHANCED_CONNECT_QUOTA_METRICS)}")
         print("=" * 80)
@@ -296,7 +295,7 @@ class QuotaValidator:
                     method_validation = self.validate_monitoring_method(quota_code, quota_config)
                     
                     if method_validation['status'] == 'error':
-                        print(f"   ⚠️  Monitoring method issue:")
+                        print("   ⚠️  Monitoring method issue:")
                         for error in method_validation['errors']:
                             print(f"      {error}")
                 
@@ -328,7 +327,7 @@ class QuotaValidator:
         
         with open(report_file, 'w') as f:
             json.dump({
-                'timestamp': datetime.utcnow().isoformat(),
+                'timestamp': datetime.now(timezone.utc).isoformat(),
                 'region': self.monitor.region if self.monitor else 'Unknown',
                 'total_quotas': len(ENHANCED_CONNECT_QUOTA_METRICS),
                 'validation_results': self.validation_results

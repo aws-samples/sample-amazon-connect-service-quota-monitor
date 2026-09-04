@@ -6,6 +6,10 @@ on:
   pull_request:
     branches: [main]
 
+# Least privilege for GITHUB_TOKEN (CKV2_GHA_1): CI only needs to read the repo.
+permissions:
+  contents: read
+
 jobs:
   lint:
     runs-on: ubuntu-latest
@@ -38,12 +42,20 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install pip-audit
+      - name: Dependency vulnerability scan
+        run: pip-audit -r requirements.txt
       - name: Secret scan
         run: |
-          git grep -rnE "AKIA[A-Z0-9]{16}|sk_live_" -- '*.py' '*.json' '*.yaml' && exit 1 || echo "No secrets found"
+          if git grep -nE "AKIA[A-Z0-9]{16}|sk_live_" -- '*.py' '*.json' '*.yaml'; then
+            echo "Secret-like string found"; exit 1
+          fi
+          echo "No secrets found"
       - name: Check for hardcoded account IDs
         run: |
-          git grep -rnE "[0-9]{12}" -- '*.py' '*.yaml' | grep -v "YOUR_ACCOUNT\|example\|000000\|123456" && echo "WARNING: possible hardcoded account ID" || echo "Clean"
+          if git grep -nE "\b[0-9]{12}\b" -- '*.py' '*.yaml' | grep -vE "YOUR_ACCOUNT|example|000000000000|123456789012"; then
+            echo "Possible hardcoded account ID"; exit 1
+          fi
+          echo "Clean"
 
   test:
     runs-on: ubuntu-latest

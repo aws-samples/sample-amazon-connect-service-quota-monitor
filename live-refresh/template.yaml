@@ -36,10 +36,20 @@ Parameters:
     Description: How frequently the metrics Lambda runs (e.g., rate(1 hour), rate(15 minutes))
     Default: 'rate(1 hour)'
 
+  HistoryApiUrl:
+    Type: String
+    Description: >
+      Optional absolute URL of this API's /quota endpoint, used only to enable the
+      7-day trend fetch in the lightweight fallback dashboard. Leave blank on the
+      first deploy, then set it to the ApiEndpoint output on a subsequent deploy.
+      Kept as a parameter (not a !Ref to the API) to avoid a Function<->Api
+      circular dependency.
+    Default: ''
+
 Globals:
   Function:
     Timeout: 300
-    Runtime: python3.12
+    Runtime: python3.13
     MemorySize: 512
     Architectures:
       - arm64
@@ -59,7 +69,7 @@ Resources:
           LINE_CONFIG_S3_BUCKET: !Ref LineConfigS3Bucket
           LINE_CONFIG_S3_KEY: !Ref LineConfigS3Key
           S3_REPORT_BUCKET: !Ref ReportBucket
-          API_ENDPOINT: !Sub 'https://${DashboardApi}.execute-api.${AWS::Region}.amazonaws.com/prod/quota'
+          API_ENDPOINT: !Ref HistoryApiUrl
       Policies:
         - Version: '2012-10-17'
           Statement:

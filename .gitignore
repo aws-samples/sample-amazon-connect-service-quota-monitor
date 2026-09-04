@@ -25,7 +25,7 @@ dist/
 build/
 
 # Virtual environments
-venv/a
+venv/
 env/
 ENV/
 

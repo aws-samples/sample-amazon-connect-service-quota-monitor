@@ -78,11 +78,10 @@ Parameters:
     
   LambdaRuntime:
     Type: String
-    Default: python3.12
-    AllowedValues: 
+    Default: python3.13
+    AllowedValues:
+      - python3.13
       - python3.12
-      - python3.11
-      - python3.10
     Description: Python runtime version for Lambda function
     
   DeploymentMethod:
@@ -173,17 +172,12 @@ Conditions:
   # Deployment conditions
   CreateDeploymentBucket: !Equals [!Ref CreateDeploymentBucket, 'true']
   UseProvidedDeploymentBucket: !Not [!Equals [!Ref DeploymentBucketName, '']]
-  UseS3Deployment: !Equals [!Ref DeploymentMethod, 's3']
-  
+
   # Notification conditions
   SubscribeEmail: !Not [!Equals [!Ref NotificationEmail, '']]
-  
+
   # Network conditions
   UseVPC: !Not [!Equals [!Ref VpcId, '']]
-  HasSubnets: !Not [!Equals [!Join ['', !Ref SubnetIds], '']]
-  
-  # Validation conditions
-  ValidVPCConfig: !Or [!Not [!Condition UseVPC], !Condition HasSubnets]
 
 Resources:
   # S3 Bucket for Lambda deployment packages (for large code)
@@ -224,6 +218,7 @@ Resources:
     Type: AWS::KMS::Key
     Properties:
       Description: KMS key for SNS topic encryption - Connect Quota Monitor
+      EnableKeyRotation: true
       KeyPolicy:
         Statement:
           - Sid: Enable IAM User Permissions
@@ -272,7 +267,10 @@ Resources:
     Type: AWS::S3::Bucket
     Condition: CreateS3Bucket
     DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Properties:
+      VersioningConfiguration:
+        Status: Enabled
       BucketEncryption:
         ServerSideEncryptionConfiguration:
           - ServerSideEncryptionByDefault:
@@ -291,7 +289,10 @@ Resources:
     Type: AWS::S3::Bucket
     Condition: CreateS3Bucket
     DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Properties:
+      VersioningConfiguration:
+        Status: Enabled
       BucketEncryption:
         ServerSideEncryptionConfiguration:
           - ServerSideEncryptionByDefault:
@@ -324,6 +325,7 @@ Resources:
     Condition: UseDynamoDB
     Properties:
       Description: KMS key for DynamoDB table encryption
+      EnableKeyRotation: true
       KeyPolicy:
         Statement:
           - Sid: Enable IAM User Permissions
@@ -396,6 +398,16 @@ Resources:
   S3StoragePolicy:
     Type: AWS::IAM::ManagedPolicy
     Condition: UseS3
+    Metadata:
+      # W1031: the ${S3BucketName} branch of the !If only resolves when
+      # CreateS3Bucket is False, which (per the condition) means S3BucketName is
+      # non-empty -> the ARN is well-formed. cfn-lint cannot correlate the
+      # condition with the parameter value, so it flags the empty-name case that
+      # can never occur here.
+      cfn-lint:
+        config:
+          ignore_checks:
+            - W1031
     Properties:
       ManagedPolicyName: !Sub "${AWS::StackName}-S3StoragePolicy"
       PolicyDocument:
@@ -549,9 +561,9 @@ Resources:
               - Sid: AppIntegrationsPermissions
                 Effect: Allow
                 Action:
-                  - appintegrations:ListApplications
-                  - appintegrations:ListDataIntegrations
-                  - appintegrations:ListEventIntegrations
+                  - app-integrations:ListApplications
+                  - app-integrations:ListDataIntegrations
+                  - app-integrations:ListEventIntegrations
                 Resource: '*'
               
               # Service Quotas permissions
@@ -653,6 +665,7 @@ Resources:
     Type: AWS::KMS::Key
     Properties:
       Description: KMS key for Lambda environment variables encryption
+      EnableKeyRotation: true
       KeyPolicy:
         Statement:
           - Sid: Enable IAM User Permissions
@@ -738,78 +751,16 @@ Resources:
           DEPLOYMENT_BUCKET: !If [CreateDeploymentBucket, !Ref DeploymentS3Bucket, '']
       Code:
         ZipFile: |
-            # Enhanced Placeholder Lambda function for Connect Quota Monitor
-            # This is a placeholder that will be replaced with the actual monitoring code
+            # Bootstrap placeholder. deploy.sh replaces this with the real
+            # lambda_function.py (uploaded via S3) immediately after stack create.
             import json
-            import logging
-            import os
-            from datetime import datetime
-            
-            logger = logging.getLogger()
-            logger.setLevel(logging.INFO)
-            
+
             def main(event, context):
-                """
-                Enhanced placeholder function for Connect Quota Monitor.
-                This function provides information about the deployment and next steps.
-                """
-                logger.info("=== Enhanced Connect Quota Monitor Placeholder ===")
-                logger.info(f"Runtime: {context.invoked_function_arn.split(':')[3] if hasattr(context, 'invoked_function_arn') else 'Unknown'}")
-                logger.info(f"Function: {context.function_name if hasattr(context, 'function_name') else 'Unknown'}")
-                logger.info(f"Version: {context.function_version if hasattr(context, 'function_version') else 'Unknown'}")
-                
-                # Log environment configuration
-                config_info = {
-                    'threshold_percentage': os.environ.get('THRESHOLD_PERCENTAGE', '80'),
-                    'use_s3_storage': os.environ.get('USE_S3_STORAGE', 'false'),
-                    'use_dynamodb': os.environ.get('USE_DYNAMODB', 'false'),
-                    's3_bucket': os.environ.get('S3_BUCKET', 'Not configured'),
-                    'dynamodb_table': os.environ.get('DYNAMODB_TABLE', 'Not configured'),
-                    'deployment_method': os.environ.get('DEPLOYMENT_METHOD', 'placeholder'),
-                    'deployment_bucket': os.environ.get('DEPLOYMENT_BUCKET', 'Not configured')
-                }
-                
-                logger.info("Current Configuration:")
-                for key, value in config_info.items():
-                    logger.info(f"  {key}: {value}")
-                
-                # Provide deployment instructions
-                deployment_method = os.environ.get('DEPLOYMENT_METHOD', 'placeholder')
-                
-                if deployment_method == 's3':
-                    logger.info("DEPLOYMENT INSTRUCTIONS (S3 Method):")
-                    logger.info("1. Package your Lambda code into a ZIP file named 'lambda-deployment.zip'")
-                    logger.info(f"2. Upload the ZIP file to S3 bucket: {os.environ.get('DEPLOYMENT_BUCKET', 'deployment-bucket')}")
-                    logger.info("3. Update the Lambda function to use the S3 object")
-                    logger.info("4. The function will automatically use the new code")
-                else:
-                    logger.info("DEPLOYMENT INSTRUCTIONS (Direct Method):")
-                    logger.info("1. Use the deploy.sh script to update the function code")
-                    logger.info("2. Or manually update the function code via AWS CLI/Console")
-                    logger.info("3. Ensure the code includes the enhanced monitoring capabilities")
-                
-                logger.info("FEATURES READY FOR DEPLOYMENT:")
-                logger.info("✓ 70+ Connect quota monitoring")
-                logger.info("✓ Dynamic instance discovery")
-                logger.info("✓ Consolidated alerting")
-                logger.info("✓ Flexible storage (S3/DynamoDB)")
-                logger.info("✓ Multi-service support")
-                logger.info("✓ Enhanced security compliance")
-                
                 return {
                     'statusCode': 200,
                     'body': json.dumps({
-                        'message': 'Enhanced Connect Quota Monitor - Ready for deployment',
-                        'timestamp': datetime.utcnow().isoformat(),
-                        'deployment_method': deployment_method,
-                        'configuration': config_info,
-                        'next_steps': [
-                            'Deploy the actual monitoring code',
-                            'Test the monitoring functionality',
-                            'Verify alert delivery',
-                            'Check storage configuration'
-                        ]
-                    }, indent=2)
+                        'message': 'Placeholder — run deploy.sh to install the monitoring code'
+                    })
                 }
       Tags:
         - Key: Purpose
@@ -905,7 +856,10 @@ Outputs:
     
   S3BucketName:
     Description: "S3 bucket for metrics and reports storage"
-    Value: !If [CreateS3Bucket, !Ref MetricsS3Bucket, !If [UseProvidedS3Bucket, !Ref S3BucketName, "Not using S3 storage"]]
+    # This output only renders under Condition: UseS3, so S3 is in use: the bucket
+    # is either the created one or the caller-provided name (the "not using S3"
+    # branch was unreachable here).
+    Value: !If [CreateS3Bucket, !Ref MetricsS3Bucket, !Ref S3BucketName]
     Condition: UseS3
     Export:
       Name: !Sub "${AWS::StackName}-S3BucketName"

@@ -31,8 +31,7 @@
       "Sid": "LexReadOnly",
       "Effect": "Allow",
       "Action": [
-        "lexv2:ListBots",
-        "lexv2:ListBotAliases"
+        "lex:ListBots"
       ],
       "Resource": "*"
     },
@@ -41,7 +40,6 @@
       "Effect": "Allow",
       "Action": [
         "servicequotas:ListServiceQuotas",
-        "servicequotas:GetServiceQuota",
         "cloudwatch:GetMetricData",
         "cloudwatch:GetMetricStatistics"
       ],

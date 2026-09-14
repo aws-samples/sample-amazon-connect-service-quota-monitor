@@ -21,7 +21,7 @@ import unittest
 import sys
 import os
 from unittest.mock import Mock, patch
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -264,70 +264,108 @@ class TestMonitorViaCloudWatch(unittest.TestCase):
             self.assertIsNone(result)
 
 
-class TestIntegrationCloudWatchFix(unittest.TestCase):
-    """Integration tests using real AWS API (requires credentials)."""
+class TestCloudWatchQueryViaRealClient(unittest.TestCase):
+    """Integration test of the monitor's CloudWatch code path against a real
+    boto3 client, deterministically and offline via botocore's Stubber.
 
-    INSTANCE_ID = os.environ.get('CONNECT_INSTANCE_ID', '00000000-0000-0000-0000-000000000001')
-    REGION = os.environ.get('AWS_REGION', 'us-east-1')
+    The previous version of this test published a metric to the live
+    ``AWS/Connect`` namespace and queried it back. That can never pass: AWS
+    reserves the ``AWS/*`` namespaces, so ``put_metric_data`` into them is
+    silently dropped and the follow-up query is always empty. moto is no help
+    either -- its ``get_metric_statistics`` does not honour dimension filters.
 
-    @unittest.skipUnless(
-        os.environ.get('RUN_INTEGRATION_TESTS', 'false').lower() == 'true',
-        "Set RUN_INTEGRATION_TESTS=true to run integration tests"
-    )
-    def test_real_cloudwatch_query_with_metric_group(self):
-        """Test against real CloudWatch with injected metrics."""
+    Stubber gives us the real botocore client and request validation without a
+    network call: it asserts the request the monitor builds (including the
+    MetricGroup dimension) and returns a controlled response, so the whole path
+    -- ``_monitor_via_cloudwatch`` -> ``call_service_api`` ->
+    ``get_metric_statistics`` -> datapoint parsing -> int conversion -- is
+    exercised for real."""
+
+    INSTANCE_ID = '00000000-0000-0000-0000-000000000001'
+
+    def _monitor_with_client(self, cw_client):
+        """A ConnectQuotaMonitor whose only wired dependency is a CloudWatch
+        client, built without running the AWS-touching __init__."""
+        monitor = lambda_function.ConnectQuotaMonitor.__new__(lambda_function.ConnectQuotaMonitor)
+        monitor.get_service_client = lambda service_name: cw_client
+        return monitor
+
+    def test_query_with_metric_group_returns_value(self):
+        """With metric_group set, the monitor queries InstanceId + MetricGroup and
+        returns the datapoint value. Stubber's expected_params fails the test if
+        the MetricGroup dimension is missing from the request -- i.e. the bug the
+        fix addressed."""
         import boto3
+        from botocore.stub import Stubber, ANY
 
-        cw = boto3.client('cloudwatch', region_name=self.REGION)
-
-        # Inject test metric
-        cw.put_metric_data(
-            Namespace='AWS/Connect',
-            MetricData=[{
+        cw = boto3.client('cloudwatch', region_name='us-east-1')
+        stubber = Stubber(cw)
+        stubber.add_response(
+            'get_metric_statistics',
+            {'Label': 'ConcurrentCalls',
+             'Datapoints': [{'Timestamp': datetime.now(timezone.utc), 'Maximum': 999.0, 'Unit': 'Count'}]},
+            expected_params={
+                'Namespace': 'AWS/Connect',
                 'MetricName': 'ConcurrentCalls',
                 'Dimensions': [
                     {'Name': 'InstanceId', 'Value': self.INSTANCE_ID},
-                    {'Name': 'MetricGroup', 'Value': 'VoiceCalls'}
+                    {'Name': 'MetricGroup', 'Value': 'VoiceCalls'},
                 ],
-                'Value': 999.0,
-                'Unit': 'Count'
-            }]
+                'StartTime': ANY, 'EndTime': ANY, 'Period': 300, 'Statistics': ['Maximum'],
+            },
         )
+        monitor = self._monitor_with_client(cw)
+        metric_config = {
+            'metric_name': 'ConcurrentCalls', 'namespace': 'AWS/Connect',
+            'statistic': 'Maximum', 'scope': 'INSTANCE', 'metric_group': 'VoiceCalls',
+        }
+        with stubber:
+            result = monitor._monitor_via_cloudwatch(self.INSTANCE_ID, metric_config)
+        self.assertEqual(result, 999)
+        stubber.assert_no_pending_responses()
 
-        import time
-        time.sleep(3)
+    def test_falls_back_to_query_without_metric_group(self):
+        """Backward compatibility: when the grouped query returns no data, the
+        monitor re-queries without the MetricGroup dimension (smaller instances
+        publish these metrics with InstanceId only) and returns that value."""
+        import boto3
+        from botocore.stub import Stubber, ANY
 
-        # Query WITHOUT MetricGroup (old bug)
-        response_old = cw.get_metric_statistics(
-            Namespace='AWS/Connect',
-            MetricName='ConcurrentCalls',
-            Dimensions=[{'Name': 'InstanceId', 'Value': self.INSTANCE_ID}],
-            StartTime=datetime.now(timezone.utc) - timedelta(minutes=15),
-            EndTime=datetime.now(timezone.utc),
-            Period=300,
-            Statistics=['Maximum']
+        cw = boto3.client('cloudwatch', region_name='us-east-1')
+        stubber = Stubber(cw)
+        # First call (with MetricGroup): no data.
+        stubber.add_response(
+            'get_metric_statistics',
+            {'Label': 'ConcurrentCalls', 'Datapoints': []},
+            expected_params={
+                'Namespace': 'AWS/Connect', 'MetricName': 'ConcurrentCalls',
+                'Dimensions': [
+                    {'Name': 'InstanceId', 'Value': self.INSTANCE_ID},
+                    {'Name': 'MetricGroup', 'Value': 'VoiceCalls'},
+                ],
+                'StartTime': ANY, 'EndTime': ANY, 'Period': 300, 'Statistics': ['Maximum'],
+            },
         )
-
-        # Query WITH MetricGroup (fix)
-        response_new = cw.get_metric_statistics(
-            Namespace='AWS/Connect',
-            MetricName='ConcurrentCalls',
-            Dimensions=[
-                {'Name': 'InstanceId', 'Value': self.INSTANCE_ID},
-                {'Name': 'MetricGroup', 'Value': 'VoiceCalls'}
-            ],
-            StartTime=datetime.now(timezone.utc) - timedelta(minutes=15),
-            EndTime=datetime.now(timezone.utc),
-            Period=300,
-            Statistics=['Maximum']
+        # Fallback call (InstanceId only): data present.
+        stubber.add_response(
+            'get_metric_statistics',
+            {'Label': 'ConcurrentCalls',
+             'Datapoints': [{'Timestamp': datetime.now(timezone.utc), 'Maximum': 42.0, 'Unit': 'Count'}]},
+            expected_params={
+                'Namespace': 'AWS/Connect', 'MetricName': 'ConcurrentCalls',
+                'Dimensions': [{'Name': 'InstanceId', 'Value': self.INSTANCE_ID}],
+                'StartTime': ANY, 'EndTime': ANY, 'Period': 300, 'Statistics': ['Maximum'],
+            },
         )
-
-        # Old query should have no data, new query should have data
-        self.assertEqual(len(response_old['Datapoints']), 0,
-                         "Old query (InstanceId only) should return empty")
-        self.assertGreater(len(response_new['Datapoints']), 0,
-                           "New query (InstanceId + MetricGroup) should return data")
-        self.assertEqual(response_new['Datapoints'][0]['Maximum'], 999.0)
+        monitor = self._monitor_with_client(cw)
+        metric_config = {
+            'metric_name': 'ConcurrentCalls', 'namespace': 'AWS/Connect',
+            'statistic': 'Maximum', 'scope': 'INSTANCE', 'metric_group': 'VoiceCalls',
+        }
+        with stubber:
+            result = monitor._monitor_via_cloudwatch(self.INSTANCE_ID, metric_config)
+        self.assertEqual(result, 42)
+        stubber.assert_no_pending_responses()
 
 
 if __name__ == '__main__':

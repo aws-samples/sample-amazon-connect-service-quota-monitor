@@ -7,6 +7,21 @@ import sys
 from datetime import datetime
 
 
+def fmt_num(v):
+    """Format a usage/limit value without lying about fractional rates. Whole
+    numbers render as grouped integers (1,000); fractional values keep two
+    decimals (0.45) instead of being truncated to 0 -- which would otherwise
+    show "Usage: 0" next to a nonzero utilization percentage for sub-1-TPS
+    quotas like SearchContacts."""
+    try:
+        f = float(v)
+    except (TypeError, ValueError):
+        return str(v)
+    if f == int(f):
+        return f"{int(f):,}"
+    return f"{f:,.2f}"
+
+
 def util_class(pct):
     if pct >= 80:
         return "high"
@@ -26,7 +41,7 @@ def bar_row(name, usage, limit, pct, extra_cols=""):
     width = min(pct, 100)
     return (
         f"<tr>{extra_cols}<td>{html.escape(str(name))}</td>"
-        f'<td class="mono">{usage:,} / {limit:,}</td>'
+        f'<td class="mono">{fmt_num(usage)} / {fmt_num(limit)}</td>'
         f'<td class="bar-cell"><div class="bar-bg"><div class="bar-fill {cls}" style="width:{width}%"></div></div></td>'
         f'<td class="right"><span class="util {cls}">{pct:.1f}%</span></td></tr>\n'
     )
@@ -39,7 +54,7 @@ def api_row(name, service, limit, usage, pct):
         f"<tr><td>{html.escape(str(name))}</td>"
         f'<td class="mono">{html.escape(str(service))}</td>'
         f'<td class="right mono">{limit_str}</td>'
-        f'<td class="right mono">{usage}</td>'
+        f'<td class="right mono">{fmt_num(usage)}</td>'
         f'<td class="right"><span class="util {cls}">{pct:.1f}%</span></td></tr>\n'
     )
 
@@ -210,6 +225,48 @@ tr:hover{background:#f8f9fa}
 """
 
 
+INSTANCE_CATEGORY_ORDER = ["CORE_CONNECT", "CONTACT_HANDLING", "ROUTING_QUEUES", "INTEGRATIONS", "FORECASTING_CAPACITY"]
+
+
+def render_instance_sections(instance_alias, instance_id, results, threshold, show_header):
+    """Render all category sections for a single instance. Every monitored
+    instance is rendered (previously only the last instance in the dict was
+    shown, so a multi-instance account hid every other instance's quotas -- and
+    its violations -- even though the top-line KPIs counted them)."""
+    out = ""
+    if show_header:
+        out += (
+            f'<h2 class="instance-header">Instance: {html.escape(str(instance_alias))} '
+            f'({html.escape(str(instance_id))})</h2>\n'
+        )
+    groups = group_by_category(results)
+    rendered = set()
+
+    def render_group(cat, items):
+        label = CATEGORY_LABELS.get(cat, cat.replace("_", " ").title())
+        cat_violations = sum(1 for r in items if r.get("utilization_percentage", 0) >= threshold)
+        section = f"""<div class="section">
+<div class="section-header">{label} {badge(cat_violations)}</div>
+<table><thead><tr><th>Quota</th><th>Usage / Limit</th><th class="bar-cell">Utilization</th><th class="right">%</th></tr></thead><tbody>\n"""
+        for r in items:
+            section += bar_row(
+                r["quota_name"], r.get("current_usage", 0), r.get("quota_limit", 0),
+                r.get("utilization_percentage", 0),
+            )
+        return section + "</tbody></table></div>\n"
+
+    for cat in INSTANCE_CATEGORY_ORDER:
+        items = groups.get(cat, [])
+        if items:
+            out += render_group(cat, items)
+            rendered.add(cat)
+    for cat, items in groups.items():
+        if cat in rendered or cat == "API_RATE_LIMITS":
+            continue
+        out += render_group(cat, items)
+    return out
+
+
 def generate_html(data):
     mon = data["monitoring_results"]
     total_checked = mon.get("total_quotas_checked", 0)
@@ -218,19 +275,24 @@ def generate_html(data):
     ts = data.get("timestamp", "")
     threshold = data.get("threshold_percentage", 80)
 
-    # Collect all results for max utilization
+    # Collect account results + EVERY instance's results for the max-utilization KPI.
+    instances = list(mon.get("instance_results", {}).items())
     all_results = list(mon.get("account_results", []))
-    instance_alias = ""
-    instance_id = ""
-    instance_results = []
-    for iid, idata in mon.get("instance_results", {}).items():
-        instance_alias = idata.get("instance_alias", iid)
-        instance_id = iid
-        instance_results = idata.get("results", [])
-        all_results.extend(instance_results)
+    for _iid, idata in instances:
+        all_results.extend(idata.get("results", []))
 
     max_util = max((r.get("utilization_percentage", 0) for r in all_results), default=0)
     max_cls = util_class(max_util)
+
+    # Title/subtitle scope: name the single instance, or summarize when several.
+    if len(instances) == 1:
+        instance_alias = instances[0][1].get("instance_alias", instances[0][0])
+        instance_id = instances[0][0]
+        title_scope = f"{html.escape(str(instance_alias))} ({html.escape(str(instance_id))})"
+    else:
+        instance_alias = f"{len(instances)} instances"
+        instance_id = ""
+        title_scope = f"{len(instances)} instance(s) monitored"
 
     # Format timestamp
     try:
@@ -238,9 +300,6 @@ def generate_html(data):
         ts_display = dt.strftime("%B %d, %Y %H:%M UTC")
     except Exception:
         ts_display = ts
-
-    # Group instance results by category
-    inst_groups = group_by_category(instance_results)
 
     # Separate account results: non-API vs API
     acct_non_api = [r for r in mon.get("account_results", []) if r.get("category") != "API_RATE_LIMITS"]
@@ -259,7 +318,7 @@ def generate_html(data):
 <body>
 <div class="container">
 <h1>Amazon Connect Quota Report</h1>
-<div class="subtitle">Instance: {html.escape(str(instance_alias))} ({html.escape(str(instance_id))}) — Generated: {html.escape(str(ts_display))}</div>
+<div class="subtitle">{title_scope} — Generated: {html.escape(str(ts_display))}</div>
 
 <div class="kpi-row">
   <div class="kpi"><div class="kpi-label">Total quotas checked</div><div class="kpi-value">{total_checked}</div></div>
@@ -277,45 +336,20 @@ def generate_html(data):
 <table><thead><tr><th>Quota</th><th>Scope</th><th>Usage / Limit</th><th class="bar-cell">Utilization</th><th class="right">%</th></tr></thead><tbody>\n"""
         for r in sorted(acct_non_api, key=lambda x: x.get("utilization_percentage", 0), reverse=True):
             pct = r.get("utilization_percentage", 0)
-            usage = int(r.get("current_usage", 0))
-            limit = int(r.get("quota_limit", 0))
             scope_col = '<td><span class="scope-tag">ACCOUNT</span></td>'
-            html_out += bar_row(r["quota_name"], usage, limit, pct, extra_cols=scope_col)
+            html_out += bar_row(
+                r["quota_name"], r.get("current_usage", 0), r.get("quota_limit", 0),
+                pct, extra_cols=scope_col,
+            )
         html_out += "</tbody></table></div>\n"
 
-    # Instance-level sections by category
-    category_order = ["CORE_CONNECT", "CONTACT_HANDLING", "ROUTING_QUEUES", "INTEGRATIONS", "FORECASTING_CAPACITY"]
-    for cat in category_order:
-        items = inst_groups.get(cat, [])
-        if not items:
-            continue
-        label = CATEGORY_LABELS.get(cat, cat)
-        cat_violations = sum(1 for r in items if r.get("utilization_percentage", 0) >= threshold)
-        html_out += f"""<div class="section">
-<div class="section-header">{label} {badge(cat_violations)}</div>
-<table><thead><tr><th>Quota</th><th>Usage / Limit</th><th class="bar-cell">Utilization</th><th class="right">%</th></tr></thead><tbody>\n"""
-        for r in items:
-            pct = r.get("utilization_percentage", 0)
-            usage = int(r.get("current_usage", 0))
-            limit = int(r.get("quota_limit", 0))
-            html_out += bar_row(r["quota_name"], usage, limit, pct)
-        html_out += "</tbody></table></div>\n"
-
-    # Remaining instance categories not in the predefined order
-    for cat, items in inst_groups.items():
-        if cat in category_order or cat == "API_RATE_LIMITS":
-            continue
-        label = CATEGORY_LABELS.get(cat, cat.replace("_", " ").title())
-        cat_violations = sum(1 for r in items if r.get("utilization_percentage", 0) >= threshold)
-        html_out += f"""<div class="section">
-<div class="section-header">{label} {badge(cat_violations)}</div>
-<table><thead><tr><th>Quota</th><th>Usage / Limit</th><th class="bar-cell">Utilization</th><th class="right">%</th></tr></thead><tbody>\n"""
-        for r in items:
-            pct = r.get("utilization_percentage", 0)
-            usage = int(r.get("current_usage", 0))
-            limit = int(r.get("quota_limit", 0))
-            html_out += bar_row(r["quota_name"], usage, limit, pct)
-        html_out += "</tbody></table></div>\n"
+    # Instance-level sections, one block per monitored instance.
+    show_headers = len(instances) > 1
+    for iid, idata in instances:
+        html_out += render_instance_sections(
+            idata.get("instance_alias", iid), iid, idata.get("results", []),
+            threshold, show_headers,
+        )
 
     # API Rate Limits
     if acct_api:
@@ -326,7 +360,7 @@ def generate_html(data):
 <table><thead><tr><th>API</th><th>Service</th><th class="right">Limit (TPS)</th><th class="right">Usage</th><th class="right">%</th></tr></thead><tbody>\n"""
         for r in acct_api:
             pct = r.get("utilization_percentage", 0)
-            usage = int(r.get("current_usage", 0))
+            usage = r.get("current_usage", 0)
             limit = r.get("quota_limit", 0)
             name = r["quota_name"].replace("Rate of ", "").replace(" API requests", "")
             html_out += api_row(name, r.get("service", "connect"), limit, usage, pct)
@@ -353,9 +387,11 @@ if __name__ == "__main__":
     with open(input_path) as f:
         data = json.load(f)
 
-    html = generate_html(data)
+    # Not `html = ...`: that would shadow the module-level `import html` used for
+    # escaping inside generate_html.
+    rendered_html = generate_html(data)
 
     with open(output_path, "w") as f:
-        f.write(html)
+        f.write(rendered_html)
 
     print(f"Report generated: {output_path}")

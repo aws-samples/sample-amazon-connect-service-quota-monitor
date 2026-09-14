@@ -451,55 +451,48 @@ class TestQuotaImpactModel:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 class TestCollectUsageMetrics:
-    """Tests for CloudWatch usage metric collection."""
+    """Tests for CloudWatch usage metric collection. These drive the real
+    mapper.collect_usage_metrics via a stubbed CloudWatch client (previously
+    they re-derived the arithmetic inline and never called the function, so a
+    broken implementation would not have failed them)."""
 
-    def test_peak_tps_calculation(self, cw_client):
-        """Peak TPS = peak daily calls / 28800 (8hr business day)."""
-        with Stubber(cw_client):
-            # We need to stub for each API in the high_traffic_apis list
-            # Just test the math with a known value
-            daily_calls = 748769  # Example high-volume Monday
-            expected_peak_tps = daily_calls / 28800  # ~26 TPS
-            assert expected_peak_tps == pytest.approx(26.0, rel=0.1)
+    def test_peak_tps_uses_business_day_seconds(self, cw_client):
+        """peak_tps_estimate = peak daily calls / BUSINESS_DAY_SECONDS, computed
+        by the real function against a stubbed CloudWatch response."""
+        n = len(mapper.HIGH_TRAFFIC_APIS)
+        with Stubber(cw_client) as stub:
+            # First API has data; the rest return empty.
+            stub.add_response(
+                "get_metric_data",
+                {"MetricDataResults": [{"Id": "usage", "Values": [748769.0, 500000.0]}]},
+            )
+            for _ in range(n - 1):
+                stub.add_response(
+                    "get_metric_data", {"MetricDataResults": [{"Id": "usage", "Values": []}]}
+                )
+            metrics = mapper.collect_usage_metrics(cw_client, "iid")
 
-    def test_empty_metric_handling(self):
-        """APIs with no data should return 0 for all fields."""
-        # Simulate empty CloudWatch response
-        values = []
-        avg = sum(values) / len(values) if values else 0
-        peak = max(values) if values else 0
-        peak_tps = (max(values) / 28800) if values else 0
-        assert avg == 0
-        assert peak == 0
-        assert peak_tps == 0
+        first = mapper.HIGH_TRAFFIC_APIS[0]
+        assert metrics[first]["peak_daily"] == 748769.0
+        assert metrics[first]["peak_tps_estimate"] == pytest.approx(
+            748769.0 / mapper.BUSINESS_DAY_SECONDS
+        )
 
+    def test_empty_metric_returns_zeros(self, cw_client):
+        """An API with no datapoints yields zeros for all fields, from the real
+        function (not an inline re-derivation)."""
+        n = len(mapper.HIGH_TRAFFIC_APIS)
+        with Stubber(cw_client) as stub:
+            for _ in range(n):
+                stub.add_response(
+                    "get_metric_data", {"MetricDataResults": [{"Id": "usage", "Values": []}]}
+                )
+            metrics = mapper.collect_usage_metrics(cw_client, "iid")
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# TEST: TDG extraction from TargetArn
-# ═══════════════════════════════════════════════════════════════════════════════
-
-class TestTdgExtraction:
-    """Tests for TDG ID extraction from phone number TargetArn."""
-
-    def test_extracts_tdg_from_full_arn(self):
-        """Should extract last segment after /."""
-        arn = 'arn:aws:connect:us-east-1:123456789012:traffic-distribution-group/9e209bb8-1234-5678'
-        tdg_id = arn.split('/')[-1] if '/' in arn else 'unknown'
-        assert tdg_id == '9e209bb8-1234-5678'
-
-    def test_handles_no_slash(self):
-        """TargetArn without / should return 'unknown'."""
-        arn = 'some-weird-arn-no-slash'
-        tdg_id = arn.split('/')[-1] if '/' in arn else 'unknown'
-        # This actually finds no '/' so returns 'unknown'
-        # Wait — 'some-weird-arn-no-slash' has no '/'
-        assert tdg_id == 'unknown'
-
-    def test_handles_empty_arn(self):
-        """Empty TargetArn should not crash."""
-        arn = ''
-        tdg_id = arn.split('/')[-1] if '/' in arn else 'unknown'
-        assert tdg_id == 'unknown'
+        first = mapper.HIGH_TRAFFIC_APIS[0]
+        assert metrics[first]["avg_daily"] == 0
+        assert metrics[first]["peak_daily"] == 0
+        assert metrics[first]["peak_tps_estimate"] == 0
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

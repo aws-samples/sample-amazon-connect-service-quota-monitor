@@ -17,7 +17,7 @@ open ./quota-report.html
 What you are looking at:
 
 - The tiles across the top summarize the run: how many quotas were checked, how many breached the threshold, and the single highest utilization figure.
-- Quotas are grouped by category (Core Connect, Contact Handling, Routing and Queues, Integrations, API Rate Limits). Each group shows a small badge telling you whether anything in it breached.
+- Quotas are grouped by category (Core Connect, Contact Handling, Routing and Queues, Reporting, Forecasting and Capacity, Integrations, API Rate Limits, Contact Lens). Each group shows a small badge telling you whether anything in it breached.
 - Every row is one quota with its current usage, its limit, and a utilization bar. Green is comfortable, amber is getting close, red is at or over the threshold. In this example "Phone numbers per instance" is at 5 of 5, so it shows red at 100 percent.
 - The API Rate Limits table lists each throttling quota in transactions per second. An idle instance reads zero for most of these, which is expected, because the rate metrics only appear when those APIs are being called.
 

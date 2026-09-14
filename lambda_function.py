@@ -5,11 +5,13 @@
 """
 Amazon Connect Service Quota Monitor - Enhanced Edition
 
-This comprehensive Lambda function monitors 70+ Amazon Connect service quotas across all Connect services
+This comprehensive Lambda function monitors 112 Amazon Connect service quotas across all Connect services
 with dynamic instance discovery, consolidated alerting, and intelligent deployment capabilities.
 
 Key Features:
-- Monitors 70+ quotas across 15+ service categories (Core Connect, Cases, Customer Profiles, Voice ID, etc.)
+- Monitors 112 quotas across 8 service categories (Core Connect, Contact Handling,
+  Routing and Queues, Reporting, Forecasting and Capacity, Integrations,
+  API Rate Limits, Contact Lens)
 - Dynamic instance discovery (no hardcoded instance IDs)
 - Consolidated alerts (one email per instance with all violations)
 - Flexible storage (S3, DynamoDB, or both)
@@ -26,7 +28,7 @@ Architecture:
 - Enhanced security compliance with data sanitization
 
 Usage:
-This function is designed to be deployed via CloudFormation and triggered by CloudWatch Events.
+This function is designed to be deployed via Terraform and triggered by Amazon EventBridge.
 It automatically discovers Connect instances and monitors all configured quotas.
 """
 
@@ -38,6 +40,7 @@ import os
 import sys
 import re
 import time
+import random
 from botocore.exceptions import ClientError, BotoCoreError
 from botocore.config import Config
 import uuid
@@ -192,7 +195,10 @@ is_valid, validation_errors = validate_quota_configuration()
 if not is_valid:
     logger.warning(f"Quota configuration has validation errors: {validation_errors}")
 
-logger.info(f"Enhanced Connect Quota Monitor initialized with {len(ENHANCED_CONNECT_QUOTA_METRICS)} quota definitions across {len(QUOTA_CATEGORIES)} categories")
+# Count categories that actually have quotas mapped to them, not the full list
+# of allowed category labels (QUOTA_CATEGORIES declares more than are in use).
+_active_categories = {q.get("category") for q in ENHANCED_CONNECT_QUOTA_METRICS.values() if q.get("category")}
+logger.info(f"Enhanced Connect Quota Monitor initialized with {len(ENHANCED_CONNECT_QUOTA_METRICS)} quota definitions across {len(_active_categories)} categories")
 
 class MultiServiceClientManager:
     """
@@ -547,10 +553,15 @@ class ConnectQuotaMonitor:
                 error_code = e.response['Error']['Code']
                 error_msg = e.response['Error']['Message']
 
-                # Handle specific error types
-                if error_code in ['Throttling', 'ThrottlingException', 'RequestLimitExceeded']:
-                    # Exponential backoff for throttling
-                    wait_time = (2 ** retry_count) + (retry_count * 0.1)
+                # Handle specific error types. TooManyRequestsException is what
+                # Service Quotas raises when GetServiceQuota/ListServiceQuotas are
+                # rate-limited; without it here the backoff never triggers for the
+                # one API most likely to throttle this workload.
+                if error_code in ['Throttling', 'ThrottlingException', 'RequestLimitExceeded', 'TooManyRequestsException']:
+                    # Exponential backoff with full jitter so concurrent invocations
+                    # (and this invocation's own retries) don't hit the shared
+                    # Service Quotas rate bucket in lockstep.
+                    wait_time = (2 ** retry_count) + random.uniform(0, 1)
                     logger.warning(f"API throttled for {service_name}.{api_method}, retrying in {wait_time}s")
                     time.sleep(wait_time)
                     retry_count += 1
@@ -572,6 +583,13 @@ class ConnectQuotaMonitor:
                 elif error_code in ['InvalidParameterValue', 'ValidationException']:
                     # Don't retry for validation errors
                     logger.error(f"Invalid parameters for {service_name}.{api_method}: {sanitize_log(error_msg)}")
+                    return None
+
+                elif error_code in ['NoSuchResourceException', 'ResourceNotFoundException']:
+                    # Deterministic "service/quota not available in this Region" -
+                    # retrying cannot change the outcome, so fail fast instead of
+                    # burning three backoff cycles per unavailable service.
+                    logger.info(f"{service_name}.{api_method} not available in this Region: {sanitize_log(error_msg)}")
                     return None
                     
                 else:
@@ -829,22 +847,52 @@ class ConnectQuotaMonitor:
         instances = self.get_connect_instances()
         return [instance for instance in instances if instance.get('IsActive', False)]
     
-    def validate_instance_permissions(self, instance_id):
-        """Validate that we have necessary permissions for an instance."""
+    def check_instance_access(self, instance_id):
+        """Probe access to an instance, distinguishing a real permission gap
+        from a transient failure.
+
+        Returns one of:
+          'ok'      - list_users succeeded; we can monitor this instance.
+          'denied'  - AccessDenied/Unauthorized; monitoring will not work, skip.
+          'unknown' - throttling, a network error, or any other transient/
+                      indeterminate failure. The caller should NOT skip the
+                      instance on this: a throttle is not a permission gap, and
+                      skipping would silently drop a breaching instance from the
+                      run. Per-quota calls will report None where they truly
+                      cannot read, without discarding the whole instance.
+
+        This calls the client directly (not call_service_api, which collapses
+        every failure to None) so it can inspect the error code.
+        """
         try:
-            # Test basic permissions by trying to list users
-            response = self.call_service_api('connect', 'list_users', InstanceId=instance_id, MaxResults=1)
-            
-            if response is not None:
-                logger.debug(f"Permissions validated for instance {instance_id}")
-                return True
-            else:
-                logger.warning(f"Permission validation failed for instance {instance_id}")
-                return False
-                
+            client = self.get_service_client('connect')
+            if not client:
+                return 'unknown'
+            client.list_users(InstanceId=instance_id, MaxResults=1)
+            logger.debug(f"Access validated for instance {instance_id}")
+            return 'ok'
+        except ClientError as e:
+            code = e.response.get('Error', {}).get('Code', '')
+            if code in ('AccessDenied', 'AccessDeniedException', 'UnauthorizedOperation', 'Forbidden'):
+                logger.warning(f"Access denied for instance {instance_id}: {code}")
+                return 'denied'
+            logger.warning(
+                f"Access probe for instance {instance_id} was indeterminate ({code}); "
+                f"proceeding to monitor rather than skipping"
+            )
+            return 'unknown'
         except Exception as e:
-            logger.warning(f"Permission validation error for instance {instance_id}: {sanitize_log(str(e))}")
-            return False
+            logger.warning(
+                f"Access probe error for instance {instance_id}: {sanitize_log(str(e))}; "
+                f"proceeding to monitor rather than skipping"
+            )
+            return 'unknown'
+
+    def validate_instance_permissions(self, instance_id):
+        """Backward-compatible boolean probe: True only when access is confirmed.
+        Prefer check_instance_access() when you need to tell 'denied' apart from
+        a transient 'unknown'."""
+        return self.check_instance_access(instance_id) == 'ok'
     
     def validate_no_hardcoded_references(self):
         """
@@ -997,12 +1045,22 @@ class ConnectQuotaMonitor:
             
             logger.info(f"Monitoring instance: {instance_alias} ({instance_id})")
             
-            # Validate permissions for this instance
-            if not self.validate_instance_permissions(instance_id):
+            # Validate permissions for this instance. Only skip on a definite
+            # access denial -- a transient throttle/network blip returns
+            # 'unknown', and skipping on that would silently drop a possibly
+            # breaching instance from the run (a false negative on the exact
+            # thing this tool exists to catch).
+            access = self.check_instance_access(instance_id)
+            if access == 'denied':
                 error_msg = f"Insufficient permissions for instance {instance_id}"
                 logger.error(error_msg)
                 monitoring_results['errors'].append(error_msg)
                 continue
+            elif access == 'unknown':
+                logger.warning(
+                    f"Access probe for instance {instance_id} was indeterminate; "
+                    f"monitoring anyway, individual quotas will report unavailable if unreadable"
+                )
             
             instance_results = []
             instance_violations = 0
@@ -1075,17 +1133,23 @@ class ConnectQuotaMonitor:
                 'alert_results': {'error': 'Failed to create alert engine'}
             }
         
-        # Validate SNS configuration
+        # Validate SNS configuration. A topic whose only subscriptions are
+        # unconfirmed is reported invalid here (alerts would be silently
+        # dropped); surface it as a prominent warning in the results rather
+        # than failing the whole run, so the monitoring data is still produced.
         is_valid, validation_message = alert_engine.validate_sns_configuration()
         if not is_valid:
-            logger.error(f"SNS configuration invalid: {validation_message}")
+            logger.error(f"SNS configuration problem: {validation_message}")
             return {
                 **monitoring_results,
-                'alert_results': {'error': f'SNS configuration invalid: {validation_message}'}
+                'alert_results': {
+                    'error': f'SNS configuration invalid: {validation_message}',
+                    'sns_warning': validation_message,
+                }
             }
-        
+
         logger.info(f"SNS configuration: {validation_message}")
-        
+
         # Process alerts if violations found
         if monitoring_results.get('violations_found', 0) > 0:
             logger.info(f"Processing {monitoring_results['violations_found']} violations for consolidated alerts")
@@ -1099,6 +1163,14 @@ class ConnectQuotaMonitor:
                 'account_violations': 0,
                 'errors': []
             }
+            # Opt-in positive signal so a healthy run is not indistinguishable
+            # from a broken/unsubscribed monitor.
+            if os.environ.get('SEND_ALLCLEAR_HEARTBEAT', 'false').lower() == 'true':
+                alert_engine.send_heartbeat(
+                    f"Connect Quota Monitor ran and found no threshold breaches. "
+                    f"Instances monitored: {monitoring_results.get('instances_monitored', 0)}, "
+                    f"quotas checked: {monitoring_results.get('total_quotas_checked', 0)}."
+                )
         
         # Combine results
         final_results = {
@@ -1483,6 +1555,18 @@ class ConnectQuotaMonitor:
         # Calculate utilization percentage
         if quota_limit > 0:
             utilization_percentage = (current_usage / quota_limit) * 100
+        elif current_usage > 0:
+            # We have real usage but no usable limit (limit is 0/unknown -- e.g.
+            # a quota not registered with Service Quotas, or an AccessDenied on
+            # the applied-limit lookup). Forcing 0% here would report a resource
+            # that is actively in use as "healthy", masking a possible breach.
+            # Report it as unavailable instead, consistent with how pagination
+            # and multi-count paths return None rather than a false-low value.
+            logger.warning(
+                f"Quota {quota_name} has usage {current_usage} but no usable limit "
+                f"({quota_limit}); reporting utilization as unavailable rather than 0%"
+            )
+            return None
         else:
             utilization_percentage = 0
         
@@ -1514,23 +1598,26 @@ class ConnectQuotaMonitor:
             logger.error(f"No API specified for api_count method in service {service}")
             return None
         
+        # Handle special cases that don't use standard list-pagination first.
+        # These APIs have no paginated response key, so they must be dispatched
+        # before the response-key lookup below (which would otherwise return None
+        # and skip the quota, e.g. describe_user_hierarchy_structure).
+        if service == 'connect' and api_name == 'describe_user_hierarchy_structure':
+            return self._count_hierarchy_levels(instance_id)
+        elif service == 'connect' and api_name == 'list_instances':
+            return self._count_connect_instances()
+
         # Build API parameters based on service and scope
         api_params = self._build_api_parameters(instance_id, metric_config)
         if api_params is None:
             return None
-        
+
         # Get response key for pagination
         response_key = self._get_response_key(service, api_name)
         if not response_key:
             logger.error(f"Unknown response key for {service}.{api_name}")
             return None
-        
-        # Handle special cases that don't use standard pagination
-        if service == 'connect' and api_name == 'describe_user_hierarchy_structure':
-            return self._count_hierarchy_levels(instance_id)
-        elif service == 'connect' and api_name == 'list_instances':
-            return self._count_connect_instances()
-        
+
         # Use standard pagination counting
         return self._count_via_pagination_enhanced(service, api_name, response_key, api_params)
     
@@ -1772,60 +1859,108 @@ class ConnectQuotaMonitor:
             return None
     
     def _monitor_via_service_quotas(self, instance_id, metric_config, quota_code):
-        """Monitor quota usage via Service Quotas API."""
+        """Monitor quota usage via Service Quotas, using the per-service applied-quota map."""
         service_code = metric_config.get('service', 'connect')
-        context_required = metric_config.get('context_required', False)
-        
+        default = metric_config.get('default_limit', 0)
+
         if not quota_code:
             logger.error("No quota_code provided for service_quotas method")
-            return None, metric_config.get('default_limit', 0)
-        
+            return None, float(default)
+
+        quota_info = self._get_service_quota_map(service_code).get(quota_code)
+        if not quota_info:
+            # Quota code not returned by ListServiceQuotas for this service
+            # (e.g. a synthetic code, or the service is not in Service Quotas).
+            return None, float(default)
+
+        # Keep the applied value as a float: some Connect rate quotas are
+        # fractional (e.g. 0.5) and int() would truncate 0.5 -> 0.
+        quota_limit = float(quota_info.get('Value', default))
+
+        # UsageMetric is *metadata* describing which CloudWatch metric reflects
+        # usage (namespace/name/dimensions/statistic); it carries no value. If it
+        # is present we query CloudWatch for the real usage; if not, usage is
+        # unavailable via Service Quotas so we return None (unknown) rather than a
+        # false 0%.
+        usage_metric = quota_info.get('UsageMetric')
+        current_usage = self._query_usage_from_usage_metric(usage_metric) if usage_metric else None
+        return current_usage, quota_limit
+
+    def _get_service_quota_map(self, service_code):
+        """Return {QuotaCode: quota-dict} for a service, fetched once via
+        ListServiceQuotas and cached for the invocation (5 minute TTL).
+
+        This replaces one GetServiceQuota call per quota (which threw ~113 calls
+        per run at Service Quotas and self-throttled) with a single paginated
+        ListServiceQuotas per distinct service.
+        """
+        if not hasattr(self, '_service_quota_maps'):
+            self._service_quota_maps = {}
+        if not hasattr(self, '_service_quota_attempts'):
+            self._service_quota_attempts = {}
+        cached = self._service_quota_maps.get(service_code)
+        if cached and (datetime.now(timezone.utc) - cached[1]).total_seconds() < 300:
+            return cached[0]
+        # Attempt the fetch at most once per service per invocation. Without this,
+        # a single throttled ListServiceQuotas (which returns an incomplete map we
+        # deliberately do not cache) makes every one of ~100 quota lookups re-issue
+        # the throttled call, each burning a full retry/backoff cycle -> a re-fetch
+        # storm that blows the Lambda's 300s budget. Reusing the partial result
+        # within the run keeps the single-invocation cost bounded (~one attempt per
+        # distinct service) without promoting a partial map to the cross-call cache.
+        if service_code in self._service_quota_attempts:
+            return self._service_quota_attempts[service_code]
+
+        quotas = {}
+        complete = False
         try:
-            # Build parameters for Service Quotas API
-            params = {
-                'ServiceCode': service_code,
-                'QuotaCode': quota_code
-            }
-            
-            # Add instance context if required
-            if context_required and instance_id:
-                params['ContextId'] = f"arn:aws:connect:{self.region}:{self._get_account_id()}:instance/{instance_id}"
-            
-            # Get quota information
-            response = self.call_service_api('service-quotas', 'get_service_quota', **params)
-            
-            if not response or 'Quota' not in response:
-                logger.warning(f"No quota data from Service Quotas API for {quota_code}")
-                return None, metric_config.get('default_limit', 0)
-            
-            quota_info = response['Quota']
-            # Keep as float: Value is a double and some Connect rate quotas are
-            # fractional (e.g. 0.5). int() would truncate 0.5 -> 0, and the
-            # downstream `if quota_limit > 0` guard would then force 0% and mask a
-            # breach. Consistent with _extract_applied_quota_value (float()).
-            quota_limit = float(quota_info.get('Value', metric_config.get('default_limit', 0)))
-
-            # NOTE: UsageMetric is *metadata* describing which CloudWatch metric
-            # reflects usage (MetricNamespace/MetricName/MetricDimensions/
-            # MetricStatisticRecommendation) -- it does NOT carry a usage value.
-            # The previous code read a non-existent 'MetricValue' key, so every
-            # service_quotas quota reported 0 usage (0%) and never alerted. If a
-            # UsageMetric is present we query CloudWatch for the real usage; if
-            # not, usage is genuinely unavailable via Service Quotas -> return
-            # None (unknown) so the quota is skipped rather than falsely "0%".
-            usage_metric = quota_info.get('UsageMetric')
-            if usage_metric:
-                current_usage = self._query_usage_from_usage_metric(usage_metric)
-            else:
-                logger.debug(f"No UsageMetric for {quota_code}; usage not available via Service Quotas")
-                current_usage = None
-
-            return current_usage, quota_limit
-
+            next_token = None
+            pages = 0
+            while pages < 50:
+                params = {'ServiceCode': service_code, 'MaxResults': 100}
+                if next_token:
+                    params['NextToken'] = next_token
+                resp = self.call_service_api('service-quotas', 'list_service_quotas', **params)
+                if not resp:
+                    # A failed/throttled page leaves the map incomplete. Break
+                    # without marking complete so we do NOT cache a partial map
+                    # (caching it would silently shadow real applied limits with
+                    # documented defaults for 5 minutes and could hide breaches).
+                    break
+                for q in resp.get('Quotas', []):
+                    code = q.get('QuotaCode')
+                    if code:
+                        quotas[code] = q
+                next_token = resp.get('NextToken')
+                pages += 1
+                if not next_token:
+                    complete = True
+                    break
         except Exception as e:
-            logger.warning(f"Error getting quota from Service Quotas API: {sanitize_log(str(e))}")
-            # Fall back to default limit
-            return None, metric_config.get('default_limit', 0)
+            # A service that is not registered with Service Quotas (or a denied
+            # call) yields no map; callers fall back to the documented default.
+            logger.warning(f"Could not list service quotas for '{service_code}': {sanitize_log(str(e))}")
+
+        # Record the attempt so the rest of this invocation reuses this result
+        # instead of re-calling a throttled endpoint (bounds calls to one per
+        # service per run). This store is invocation-scoped, not the cross-call
+        # 5-minute cache, so a partial map is never promoted across invocations.
+        self._service_quota_attempts[service_code] = quotas
+
+        if complete:
+            # Only cache a fully-paginated result in the cross-call TTL cache. An
+            # incomplete map is reused within this invocation (above) but not
+            # cached across invocations, so the next run retries rather than
+            # serving defaults for the whole TTL window.
+            self._service_quota_maps[service_code] = (quotas, datetime.now(timezone.utc))
+            logger.info(f"Loaded {len(quotas)} applied quotas for service '{service_code}'")
+        else:
+            logger.warning(
+                f"Incomplete applied-quota map for service '{service_code}' "
+                f"({len(quotas)} loaded before a failed/truncated page); not caching, "
+                f"quotas may fall back to defaults this run"
+            )
+        return quotas
 
     def _query_usage_from_usage_metric(self, usage_metric):
         """Query CloudWatch for current usage described by a ServiceQuota UsageMetric.
@@ -1868,123 +2003,30 @@ class ConnectQuotaMonitor:
             logger.warning(f"Error querying usage metric {namespace}/{metric_name}: {sanitize_log(str(e))}")
             return None
 
-    @staticmethod
-    def _extract_applied_quota_value(response, quota_code):
-        """Return the applied quota Value from a get_service_quota response, or None."""
-        if response and 'Quota' in response:
-            applied_value = response['Quota'].get('Value')
-            if applied_value is not None:
-                applied_float = float(applied_value)
-                logger.debug(f"Retrieved applied quota for {quota_code}: {applied_float}")
-                return applied_float
+    def _get_actual_quota_limit(self, service, quota_code, instance_id=None, context_required=False):
+        """Return the applied quota limit for a code, or None if not published.
+
+        Reads from the per-service applied-quota map (one ListServiceQuotas call
+        per service) so we use the customer's approved value rather than the
+        documented default. Connect quotas are account/Region scoped in Service
+        Quotas, so no per-instance ContextId lookup is made.
+
+        instance_id/context_required are accepted for call-site compatibility but
+        not used: every current quota is account/Region scoped. If a genuinely
+        resource-scoped quota is ever added (context_required=True), warn loudly
+        rather than silently return the account-level value.
+        """
+        if context_required:
+            logger.warning(
+                f"Quota {quota_code} is marked context_required, but resource-scoped "
+                f"(ContextId) lookups are not implemented; returning the account/Region "
+                f"applied limit, which may be wrong for instance {instance_id}"
+            )
+        quota = self._get_service_quota_map(service).get(quota_code)
+        if quota and quota.get('Value') is not None:
+            return float(quota['Value'])
         return None
 
-    def _get_actual_quota_limit(self, service, quota_code, instance_id=None, context_required=False):
-        """
-        Get the actual applied quota limit from Service Quotas API with caching.
-        This may differ from the default if the user has requested a quota increase.
-        
-        This method is called by all quota monitoring methods to ensure we always
-        use the applied quota value rather than just the documented default.
-        
-        Args:
-            service: AWS service code (e.g., 'connect')
-            quota_code: The quota code to look up
-            instance_id: Optional instance ID for context-aware quotas
-            context_required: Whether this quota requires instance context
-            
-        Returns:
-            Actual applied quota limit or None if unavailable
-        """
-        # Initialize cache if it doesn't exist
-        if not hasattr(self, '_quota_limit_cache'):
-            self._quota_limit_cache = {}
-        
-        # Create cache key
-        cache_key = f"{service}:{quota_code}"
-        if context_required and instance_id:
-            cache_key += f":{instance_id}"
-        
-        # Check cache first (5 minute TTL)
-        if cache_key in self._quota_limit_cache:
-            cached_value, cache_time = self._quota_limit_cache[cache_key]
-            if (datetime.now(timezone.utc) - cache_time).total_seconds() < 300:
-                logger.debug(f"Using cached quota limit for {quota_code}: {cached_value}")
-                return cached_value
-        
-        try:
-            # Build parameters for Service Quotas API
-            params = {
-                'ServiceCode': service,
-                'QuotaCode': quota_code
-            }
-            
-            # Add instance context only for quotas that support resource-level
-            # adjustability. Sending a ContextId for a non-resource-level (or
-            # non-adjustable) Connect quota raises NoSuchResourceException; we
-            # retry without it below rather than silently falling back to the
-            # hardcoded default.
-            used_context = False
-            if context_required and instance_id:
-                context_id = f"arn:aws:connect:{self.region}:{self._get_account_id()}:instance/{instance_id}"
-                params['ContextId'] = context_id
-                used_context = True
-                logger.debug(f"Fetching context-aware quota for {quota_code} with context: {context_id}")
-
-            # Try to get the applied quota value
-            response = self.call_service_api('service-quotas', 'get_service_quota', **params)
-
-            applied_float = self._extract_applied_quota_value(response, quota_code)
-            if applied_float is not None:
-                self._quota_limit_cache[cache_key] = (applied_float, datetime.now(timezone.utc))
-                return applied_float
-
-            # If we can't get the applied value, cache None and return None to use default
-            logger.debug(f"Could not retrieve applied quota for {quota_code}, will use default")
-            self._quota_limit_cache[cache_key] = (None, datetime.now(timezone.utc))
-            return None
-
-        except ClientError as e:
-            error_code = e.response['Error']['Code']
-
-            # NoSuchResource/ResourceNotFound: the quota code exists but not for
-            # the (context) resource we asked about. If we sent a ContextId, retry
-            # once WITHOUT it to get the account/Region-level applied value before
-            # giving up -- otherwise we would silently use the hardcoded default
-            # and miss any customer quota increase.
-            if error_code in ('NoSuchResourceException', 'ResourceNotFoundException'):
-                if used_context:
-                    logger.debug(f"Context-aware lookup for {quota_code} failed ({error_code}); retrying without ContextId")
-                    try:
-                        response = self.call_service_api(
-                            'service-quotas', 'get_service_quota',
-                            ServiceCode=service, QuotaCode=quota_code
-                        )
-                        applied_float = self._extract_applied_quota_value(response, quota_code)
-                        if applied_float is not None:
-                            self._quota_limit_cache[cache_key] = (applied_float, datetime.now(timezone.utc))
-                            return applied_float
-                    except ClientError as retry_err:
-                        logger.debug(f"Retry without context for {quota_code} failed: {retry_err.response['Error']['Code']}")
-                logger.debug(f"Quota {quota_code} not found in Service Quotas API (expected for some quotas)")
-                # Cache this negative result to avoid repeated API calls
-                self._quota_limit_cache[cache_key] = (None, datetime.now(timezone.utc))
-                return None
-
-            # AccessDeniedException - permission issue
-            elif error_code == 'AccessDeniedException':
-                logger.warning(f"Access denied when fetching quota {quota_code} - check IAM permissions")
-                # Don't cache permission errors as they might be temporary
-                return None
-            
-            # For other errors, log a warning
-            logger.warning(f"Error fetching applied quota for {quota_code}: {error_code}")
-            return None
-            
-        except Exception as e:
-            logger.warning(f"Unexpected error fetching applied quota for {quota_code}: {sanitize_log(str(e))}")
-            return None
-    
     def _build_api_parameters(self, instance_id, metric_config):
         """Build API parameters based on service, API, and scope."""
         service = metric_config.get('service', 'connect')
@@ -1993,21 +2035,24 @@ class ConnectQuotaMonitor:
         
         params = {}
         
-        # Add instance ID for instance-scoped quotas
+        # Add instance ID for instance-scoped quotas.
+        # list_phone_numbers_v2 is the exception: it takes InstanceId OR
+        # TargetArn, never both (AWS rejects the pair with a validation error),
+        # so it is handled below via TargetArn and must NOT also get InstanceId.
         if scope == 'INSTANCE' and instance_id:
-            if service == 'connect':
+            if service == 'connect' and api_name != 'list_phone_numbers_v2':
                 params['InstanceId'] = instance_id
             elif service == 'connectcases':
                 params['instanceId'] = instance_id
             elif service == 'connectcampaigns':
                 params['instanceId'] = instance_id
-        
+
         # Add service-specific parameters
         if service == 'connect' and api_name == 'list_queues':
             params['QueueTypes'] = ['STANDARD']
         elif service == 'connect' and api_name == 'list_phone_numbers_v2':
             params['TargetArn'] = f"arn:aws:connect:{self.region}:{self._get_account_id()}:instance/{instance_id}"
-        
+
         return params
     
     def _get_response_key(self, service, api_name):
@@ -2429,11 +2474,19 @@ class FlexibleStorageEngine:
         """Prepare consolidated monitoring report for storage."""
         timestamp = datetime.now(timezone.utc)
         
+        # Record the threshold this run actually used so downstream renderers
+        # (quota_report_to_html.py) flag violations against the real configured
+        # value instead of a hardcoded default that can disagree with the KPIs.
+        effective_threshold = _coerce_threshold(
+            os.environ.get('THRESHOLD_PERCENTAGE', THRESHOLD_PERCENTAGE)
+        )
+
         return {
             'record_type': 'consolidated_report',
             'timestamp': timestamp.isoformat(),
             'date': timestamp.strftime('%Y-%m-%d'),
             'execution_id': str(uuid.uuid4()),
+            'threshold_percentage': effective_threshold,
             'monitoring_results': monitoring_results,
             'alert_results': alert_results or {},
             'summary': {
@@ -2584,6 +2637,27 @@ class FlexibleStorageEngine:
             logger.error(f"S3 report storage error: {sanitize_log(str(e))}")
             return False
     
+    def _ttl_epoch(self):
+        """Epoch-seconds value for the DynamoDB `ttl` attribute so stored records
+        auto-expire. The table has TimeToLive enabled on `ttl`; without writing
+        this attribute, items never expire and the table grows without bound.
+        Retention is DYNAMODB_TTL_DAYS (default 90); set it to 0 to disable
+        expiry (returns None, and callers omit the attribute)."""
+        try:
+            days = int(os.environ.get('DYNAMODB_TTL_DAYS', '90'))
+        except (TypeError, ValueError):
+            days = 90
+        if days <= 0:
+            return None
+        return str(int(datetime.now(timezone.utc).timestamp()) + days * 86400)
+
+    def _apply_ttl(self, item):
+        """Add the `ttl` attribute to a DynamoDB item unless expiry is disabled."""
+        ttl = self._ttl_epoch()
+        if ttl is not None:
+            item['ttl'] = {'N': ttl}
+        return item
+
     def _store_to_dynamodb_instance(self, data):
         """Store instance metrics to DynamoDB."""
         try:
@@ -2615,12 +2689,12 @@ class FlexibleStorageEngine:
                 item['max_utilization'] = {'N': str(summary.get('max_utilization', 0))}
                 item['avg_utilization'] = {'N': str(summary.get('avg_utilization', 0))}
             
-            # Store item
+            # Store item (with TTL so it auto-expires per DYNAMODB_TTL_DAYS)
             self.dynamodb_client.put_item(
                 TableName=self.dynamodb_table,
-                Item=item
+                Item=self._apply_ttl(item)
             )
-            
+
             logger.info(f"Stored instance metrics to DynamoDB: {record_id}")
             return True
             
@@ -2657,12 +2731,12 @@ class FlexibleStorageEngine:
                 item['max_utilization'] = {'N': str(summary.get('max_utilization', 0))}
                 item['avg_utilization'] = {'N': str(summary.get('avg_utilization', 0))}
             
-            # Store item
+            # Store item (with TTL so it auto-expires per DYNAMODB_TTL_DAYS)
             self.dynamodb_client.put_item(
                 TableName=self.dynamodb_table,
-                Item=item
+                Item=self._apply_ttl(item)
             )
-            
+
             logger.info(f"Stored account metrics to DynamoDB: {record_id}")
             return True
             
@@ -2694,12 +2768,12 @@ class FlexibleStorageEngine:
                 item['alerts_sent'] = {'N': str(summary.get('alerts_sent', 0))}
                 item['errors_count'] = {'N': str(summary.get('errors_count', 0))}
             
-            # Store item
+            # Store item (with TTL so it auto-expires per DYNAMODB_TTL_DAYS)
             self.dynamodb_client.put_item(
                 TableName=self.dynamodb_table,
-                Item=item
+                Item=self._apply_ttl(item)
             )
-            
+
             logger.info(f"Stored consolidated report to DynamoDB: {record_id}")
             return True
             
@@ -3151,7 +3225,28 @@ class AlertConsolidationEngine:
         except Exception as e:
             logger.error(f"Unexpected error sending SNS alert: {sanitize_log(str(e))}")
             return False
-    
+
+    def send_heartbeat(self, summary_text):
+        """Publish an 'all clear' heartbeat so operators get a positive signal
+        that the monitor ran and the alerting path works, instead of silence
+        that is indistinguishable from a broken deployment or an unconfirmed
+        subscription. Opt-in via SEND_ALLCLEAR_HEARTBEAT=true. Best-effort:
+        a heartbeat failure never fails the run."""
+        try:
+            if not self.topic_arn or not self.topic_arn.startswith('arn:aws:sns:'):
+                return False
+            self.sns_client.publish(
+                TopicArn=self.topic_arn,
+                Subject='Connect Quota Monitor: all clear'[:100],
+                Message=summary_text,
+            )
+            logger.info("All-clear heartbeat published")
+            return True
+        except Exception as e:
+            logger.warning(f"Heartbeat publish failed (non-fatal): {sanitize_log(str(e))}")
+            return False
+
+
     def validate_sns_configuration(self):
         """Validate SNS topic configuration."""
         try:
@@ -3164,14 +3259,33 @@ class AlertConsolidationEngine:
             # Test topic accessibility
             self.sns_client.get_topic_attributes(TopicArn=self.topic_arn)
             
-            # Check if topic has subscriptions
+            # Check if topic has subscriptions, and how many are actually
+            # confirmed. A subscription that has not been confirmed has the
+            # literal SubscriptionArn "PendingConfirmation" and will NOT receive
+            # any published message -- so a topic with only pending subscriptions
+            # looks configured but silently drops every alert. Surface that.
             subscriptions = self.sns_client.list_subscriptions_by_topic(TopicArn=self.topic_arn)
-            subscription_count = len(subscriptions.get('Subscriptions', []))
-            
+            subs = subscriptions.get('Subscriptions', [])
+            subscription_count = len(subs)
+            pending = [s for s in subs if s.get('SubscriptionArn') == 'PendingConfirmation']
+            confirmed_count = subscription_count - len(pending)
+
             if subscription_count == 0:
                 return True, "SNS topic is valid but has no subscriptions"
-            
-            return True, f"SNS topic is valid with {subscription_count} subscription(s)"
+
+            if confirmed_count == 0:
+                # Valid topic, but every subscription is unconfirmed: alerts will
+                # not be delivered. Report invalid so the caller warns loudly.
+                return False, (
+                    f"SNS topic has {len(pending)} subscription(s) but none are "
+                    f"confirmed; alerts will not be delivered until the email "
+                    f"subscription is confirmed"
+                )
+
+            msg = f"SNS topic is valid with {confirmed_count} confirmed subscription(s)"
+            if pending:
+                msg += f" ({len(pending)} still pending confirmation)"
+            return True, msg
             
         except ClientError as e:
             error_code = e.response['Error']['Code']
@@ -3318,7 +3432,7 @@ def main(event=None, context=None):
                     'alerts_sent': results.get('alert_results', {}).get('alerts_sent', 0),
                     'storage_backends': results.get('storage_status', {}).get('storage_backends', []),
                     'enhanced_features': [
-                        '70+ quota monitoring',
+                        '112 quota monitoring',
                         'Dynamic instance discovery',
                         'Consolidated alerting',
                         'Flexible storage',

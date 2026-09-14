@@ -1,0 +1,8 @@
+# Explicit rule selection so results are deterministic across ruff versions.
+# Newer ruff releases enable a broader default set; pin the intent here to the
+# classic pycodestyle (E) + pyflakes (F) rules the project actually enforces.
+line-length = 200
+
+[lint]
+select = ["E", "F"]
+ignore = ["E501"]

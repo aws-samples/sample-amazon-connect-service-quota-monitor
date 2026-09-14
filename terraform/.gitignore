@@ -1,0 +1,30 @@
+# Local Terraform state and working directories. State for this project is
+# expected to live in a remote backend configured by whoever runs this
+# (see README.md) - never commit local state, it can contain secrets.
+**/.terraform/*
+*.tfstate
+*.tfstate.*
+crash.log
+crash.*.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+# Only the ROOT .terraform.lock.hcl is intentionally committed (it pins the
+# provider versions used by `terraform -chdir=terraform init`). A lock file
+# inside a module directory only exists if someone ran `terraform init`
+# from inside that module directly, which is not a supported workflow here
+# and has previously pinned an incompatible provider major version. Ignore
+# every nested one so it can never be committed by accident.
+modules/*/.terraform.lock.hcl
+
+# Real variable values (may contain a Connect instance ID or email address).
+terraform.tfvars
+*.auto.tfvars
+
+# Lambda build artifacts produced by data.archive_file.
+modules/*/build/
+
+# Editor/OS noise
+.DS_Store

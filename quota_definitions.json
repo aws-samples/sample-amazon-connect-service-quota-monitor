@@ -637,16 +637,6 @@
     "default_limit": 1,
     "context_required": false
   },
-  "L-6402A996": {
-    "name": "Workspaces per instance",
-    "category": "INTEGRATIONS",
-    "scope": "INSTANCE",
-    "method": "api_count",
-    "service": "connect",
-    "api": "list_workspaces",
-    "default_limit": 20,
-    "context_required": false
-  },
   "L-API-GMD": {
     "name": "Rate of GetMetricData API requests",
     "category": "API_RATE_LIMITS",

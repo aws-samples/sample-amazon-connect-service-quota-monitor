@@ -1,7 +1,15 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: 'Enhanced Amazon Connect Service Quota Monitor - Comprehensive monitoring of 70+ Connect quotas with intelligent deployment and consolidated alerting'
+Description: 'Enhanced Amazon Connect Service Quota Monitor - Comprehensive monitoring of 112 Connect quotas with intelligent deployment and consolidated alerting'
 
 Metadata:
+  # W1030: SubnetIds is referenced only inside the UseVPC branch of the Lambda
+  # VpcConfig !If, which resolves only when VpcId is non-empty (and then
+  # SubnetIds is required). cfn-lint cannot correlate the condition with the
+  # empty-list default, so it flags a case that can never reach VpcConfig.
+  cfn-lint:
+    config:
+      ignore_checks:
+        - W1030
   AWS::CloudFormation::Interface:
     ParameterGroups:
       - Label:
@@ -355,7 +363,12 @@ Resources:
     Type: AWS::DynamoDB::Table
     Condition: UseDynamoDB
     Properties:
-      TableName: !Sub "${AWS::StackName}-metrics"
+      # Use the DynamoDBTableName parameter as the actual table name so the
+      # DYNAMODB_TABLE env var and the IAM policy (both keyed on
+      # ${DynamoDBTableName}) point at the table this stack really creates.
+      # Previously the table was ${AWS::StackName}-metrics while the env var and
+      # IAM referenced the parameter, so storage silently targeted the wrong name.
+      TableName: !Ref DynamoDBTableName
       BillingMode: PAY_PER_REQUEST
       TimeToLiveSpecification:
         AttributeName: ttl
@@ -381,9 +394,9 @@ Resources:
               KeyType: RANGE
           Projection:
             ProjectionType: ALL
-          ProvisionedThroughput:
-            ReadCapacityUnits: 5
-            WriteCapacityUnits: 5
+          # No ProvisionedThroughput here: the table is PAY_PER_REQUEST, and
+          # DynamoDB rejects provisioned throughput on a GSI of an on-demand
+          # table (CreateTable fails). On-demand tables bill GSIs on demand too.
       SSESpecification:
         SSEEnabled: true
         SSEType: KMS
@@ -570,8 +583,10 @@ Resources:
               - Sid: ServiceQuotasPermissions
                 Effect: Allow
                 Action:
+                  # GetServiceQuota removed: the monitor now batches applied
+                  # limits via ListServiceQuotas (one call per service) instead
+                  # of one GetServiceQuota per quota.
                   - servicequotas:ListServiceQuotas
-                  - servicequotas:GetServiceQuota
                   - servicequotas:ListServices
                 Resource: '*'
               
@@ -837,7 +852,7 @@ Resources:
 
 Outputs:
   LambdaFunction:
-    Description: "Enhanced Lambda function that monitors 70+ Connect quotas"
+    Description: "Enhanced Lambda function that monitors 112 Connect quotas"
     Value: !Ref QuotaMonitorLambda
     Export:
       Name: !Sub "${AWS::StackName}-LambdaFunction"
@@ -890,7 +905,7 @@ Outputs:
     
   MonitoringCapabilities:
     Description: "Enhanced monitoring capabilities"
-    Value: "70+ Connect quotas, Dynamic instance discovery, Consolidated alerting, Multi-service support, Flexible storage, Python 3.12 runtime"
+    Value: "112 Connect quotas, Dynamic instance discovery, Consolidated alerting, Multi-service support, Flexible storage, Python 3.12 runtime"
     
   DeploymentInstructions:
     Description: "Next steps for completing the deployment"

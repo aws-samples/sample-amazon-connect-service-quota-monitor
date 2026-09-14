@@ -1,0 +1,21 @@
+# Remote state backend (optional). Local state (the default with no backend
+# block) is fine for a pilot/single-operator setup, but for anything shared
+# across a team or CI, uncomment this, fill in your own bucket/table/region,
+# and rename this file to backend.tf so Terraform picks it up.
+#
+# terraform {
+#   backend "s3" {
+#     bucket         = "YOUR_TFSTATE_BUCKET_NAME"
+#     key            = "connect-quota-monitor/terraform.tfstate"
+#     region         = "YOUR_AWS_REGION"
+#     dynamodb_table = "YOUR_TFSTATE_LOCK_TABLE_NAME"
+#     encrypt        = true
+#   }
+# }
+
+# Alternative: keep the values above out of source entirely and supply them
+# at init time, e.g.:
+#   terraform init -backend-config="bucket=YOUR_TFSTATE_BUCKET_NAME" \
+#     -backend-config="key=connect-quota-monitor/terraform.tfstate" \
+#     -backend-config="region=YOUR_AWS_REGION" \
+#     -backend-config="dynamodb_table=YOUR_TFSTATE_LOCK_TABLE_NAME"

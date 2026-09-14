@@ -1,6 +1,8 @@
-# Getting Started — Full Setup Guide
+# Local report generation (CLI only, no deployment)
 
-This guide walks you through every step from zero to a working dashboard. Follow it exactly — if something looks different from what's described, check the Common Issues section in the README.
+This is an optional local tool. It is not the way to deploy the Connect Quota Monitor solution. For deployment, see the root [README.md](../README.md) and [terraform/README.md](../terraform/README.md), which set up the scheduled Lambda functions, the alerting, and the live-refresh dashboard through Terraform.
+
+This guide walks you through running `connect-resource-mapper.py` on your own machine to produce a one-off, static HTML report and dashboard from your Connect instance's current configuration. There is no deployment, no schedule, and no login: the output is a set of local files you open in a browser once. Follow it exactly. If something looks different from what's described, check the Common Issues section in the README.
 
 ---
 
@@ -35,7 +37,7 @@ Then try `brew install python@3.12` again.
 4. **IMPORTANT:** Check the box that says "Add Python to PATH" at the bottom of the first screen
 5. Click "Install Now"
 
-Verify it worked — open **PowerShell** (search for it in Start menu) and type:
+Verify it worked. Open **PowerShell** (search for it in Start menu) and type:
 ```powershell
 python --version
 ```
@@ -129,7 +131,7 @@ The IAM permissions needed: [`iam/README.md`](../iam/README.md)
 1. Go to https://console.aws.amazon.com/connect/
 2. Make sure you're in the correct region (top-right corner)
 3. Click on your instance alias (the name you gave it)
-4. Look at the URL in your browser — it contains your Instance ID:
+4. Look at the URL in your browser. It contains your Instance ID:
 
 ```
 https://console.aws.amazon.com/connect/home?region=us-east-1#/instance/YOUR_INSTANCE_ID/dashboard
@@ -145,7 +147,7 @@ aws connect list-instances --region us-east-1
 
 Look for the `"Id"` field in the output.
 
-**Write it down** — you'll need it in the next step.
+**Write it down.** You'll need it in the next step.
 
 ---
 
@@ -172,7 +174,7 @@ git clone https://github.com/aws-samples/sample-amazon-connect-service-quota-mon
 cd sample-amazon-connect-service-quota-monitor
 ```
 
-`git` not installed? Download from https://git-scm.com/download/win — restart PowerShell after installing.
+`git` not installed? Download from https://git-scm.com/download/win, then restart PowerShell after installing.
 </details>
 
 ### Step 2: Create a virtual environment and install dependencies
@@ -234,15 +236,25 @@ python connect-resource-mapper.py `
 
 **What success looks like:**
 ```
-[INFO] Scanning instance YOUR_INSTANCE_ID...
-[INFO] Found 12 phone numbers
-[INFO] Found 3 traffic distribution groups
-[INFO] Found 25 contact flows
-[INFO] Found 8 Lambda functions
-[INFO] Quota impact model generated
-[INFO] Dashboard written to ./output/connect-api-report.html
-✓ Complete — 3 files written to ./output/
+────────────────────────────────────────────────────────────
+Outputs:
+  ./output/connect-resource-map.json
+  ./output/connect-quota-impact-model.json
+  ./output/connect-dashboard.html  ← Open in browser
+  ./output/connect-api-report.html  ← Consolidated API Report
+────────────────────────────────────────────────────────────
+Summary:
+  Phone numbers: 12
+  Contact flows: 25
+  Lambdas: 8
+  Provisioned Concurrency: 2
+  Quotas > 70% utilized: 1
+════════════════════════════════════════════════════════════
 ```
+
+You get four files: two JSON data files, and two self-contained HTML views
+(`connect-dashboard.html` and `connect-api-report.html`). The numbers above are
+an example; yours reflect your own instance.
 
 **What failure looks like and what to do:**
 
@@ -291,9 +303,8 @@ Your browser opens with the dashboard. You should see:
 
 ## Next steps
 
-- **Want it to refresh automatically?** Deploy the Lambda → [live-refresh/README.md](../live-refresh/README.md)
-- **Need secure hosting with SSO?** Set up CloudFront + Cognito → [cloudfront-auth/README.md](../cloudfront-auth/README.md)
-- **Want to group by business line?** Configure line-config.json → the Configuring Business Lines section in `line-config.json`
+- **Want it to refresh automatically?** Deploy the Lambda: see [live-refresh/README.md](../live-refresh/README.md)
+- **Want to group by business line?** Configure the Configuring Business Lines section in `line-config.json`
 
 ---
 

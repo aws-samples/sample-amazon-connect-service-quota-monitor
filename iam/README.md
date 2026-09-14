@@ -5,8 +5,8 @@
 Attach `cli-user-policy.json` to your IAM user or the role you assume.
 
 Before attaching, edit the file and replace:
-- `YOUR_ACCOUNT_ID` — your 12-digit AWS account ID
-- `YOUR_INSTANCE_ID` — your Connect instance ID
+- `YOUR_ACCOUNT_ID`: your 12-digit AWS account ID
+- `YOUR_INSTANCE_ID`: your Connect instance ID
 
 ```bash
 aws iam put-user-policy \
@@ -17,43 +17,24 @@ aws iam put-user-policy \
 
 ## For the Lambda (automated monitoring)
 
-### Step 1: Create the execution role
-
-```bash
-aws iam create-role \
-  --role-name ConnectQuotaDashboardRole \
-  --assume-role-policy-document file://iam/trust-policy.json
-```
-
-### Step 2: Attach permissions
-
-Edit `lambda-permission-policy.json` first — replace `YOUR_BUCKET` and `YOUR_ACCOUNT_ID`.
-
-```bash
-aws iam put-role-policy \
-  --role-name ConnectQuotaDashboardRole \
-  --policy-name ConnectQuotaDashboardPolicy \
-  --policy-document file://iam/lambda-permission-policy.json
-```
-
-### Step 3: Use the role ARN when deploying
-
-```bash
-aws iam get-role --role-name ConnectQuotaDashboardRole --query 'Role.Arn' --output text
-```
-
-Pass this ARN to the SAM template or Lambda creation command.
+You do not set this up by hand. The Terraform modules in `terraform/` create and
+manage the Lambda execution role and its policy for you (see the IAM section of
+`terraform/modules/quota-monitor/README.md` and
+`terraform/modules/live-refresh/README.md`). The `trust-policy.json` and
+`lambda-permission-policy.json` files here are kept only as a reference for the
+permissions the Lambda needs; you do not need to apply them for a Terraform
+deployment.
 
 ## What each file does
 
 | File | Purpose |
 |------|---------|
-| `trust-policy.json` | Allows Lambda service to assume the role. Ready to use, no edits needed. |
-| `lambda-permission-policy.json` | Connect read + S3 write + CloudWatch Logs. Edit bucket and account ID. |
-| `cli-user-policy.json` | Connect read + Quotas + CloudWatch. Scoped to your specific instance. Edit account and instance ID. |
+| `cli-user-policy.json` | The one you attach by hand: Connect read + Quotas + CloudWatch for running `connect-resource-mapper.py` locally. Scoped to your specific instance. Edit account and instance ID. |
+| `trust-policy.json` | Reference only. Trust policy allowing the Lambda service to assume an execution role. Terraform builds the equivalent. |
+| `lambda-permission-policy.json` | Reference only. The Lambda's Connect read + S3 write + CloudWatch Logs permissions. Terraform builds the equivalent, scoped to the resources it creates. |
 
 ## Security notes
 
-- All policies are read-only for Connect. No `Put*`, `Create*`, `Delete*`, or `Update*` actions.
+- All Connect access is read-only: the `List*` and `Describe*` families plus the single read action `connect:GetTrafficDistribution`. No `Put*`, `Create*`, `Delete*`, or `Update*` actions. The broad `connect:Get*` wildcard is intentionally NOT used, because it would also grant `connect:GetFederationToken` (which mints a signed-in session into the Connect admin/agent UI) — not something a quota monitor needs. If you extend this policy, enumerate specific `Get` actions rather than re-adding the wildcard.
 - The Lambda only writes to your specified S3 bucket and CloudWatch Logs.
 - Connect permissions are scoped to your instance ARN (CLI policy). The Lambda policy uses wildcards for simplicity but can be scoped the same way.

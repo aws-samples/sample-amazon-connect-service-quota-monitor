@@ -1,0 +1,94 @@
+# Copy this file to terraform.tfvars and fill in real values. Never commit
+# terraform.tfvars if it contains a real Connect instance ID or email address.
+
+region      = "us-east-1"
+name_prefix = "cs360-cqm"
+
+# --- quota-monitor ------------------------------------------------------------
+
+# Leave empty to skip the email subscription.
+notification_email = ""
+
+threshold_percentage = 80
+schedule_expression   = "rate(1 hour)"
+
+use_dynamodb   = true
+use_s3_storage = true
+
+lambda_timeout      = 300
+lambda_memory       = 512
+log_retention_days  = 30
+
+# Leave vpc_id empty for no VPC. If set, subnet_ids must be non-empty.
+vpc_id     = ""
+subnet_ids = []
+
+# Set true only when you intend to destroy this stack and are OK losing the
+# metrics/access-log/deployment bucket contents.
+force_destroy = false
+
+# Days before a quota-monitor DynamoDB metrics item expires via TTL.
+dynamodb_ttl_days = 90
+
+# When true, the quota-monitor Lambda sends an SNS notification even when
+# nothing is over threshold, so an "all clear" run is distinguishable from a
+# silently-broken schedule. Off by default to avoid noisy hourly emails.
+send_allclear_heartbeat = false
+
+# --- live-refresh dashboard API ------------------------------------------------
+
+deploy_live_refresh = true
+
+# Replace with a real Amazon Connect instance ID, e.g. "11111111-2222-3333-4444-555555555555".
+connect_instance_id = "REPLACE_WITH_YOUR_CONNECT_INSTANCE_ID"
+
+# Provide line configuration inline OR via S3, not both.
+line_config_json      = ""
+line_config_s3_bucket = ""
+line_config_s3_key    = "line-config.json"
+
+# Existing S3 bucket for dashboard reports/archives/peaks. Leave empty to have
+# the module create its own PRIVATE dashboard bucket, served over HTTPS by
+# CloudFront via Origin Access Control (no public bucket; works under
+# account-level S3 Block Public Access).
+report_bucket_name = ""
+
+# Leave blank; the module constructs this automatically from the deployed
+# API Gateway REST API ID, region, and stage.
+history_api_url = ""
+
+# --- dashboard login gate (Cognito) : TWO-PHASE APPLY -------------------------
+#
+# The Cognito app-client callback URL needs the CloudFront domain, CloudFront
+# needs the Lambda@Edge, and the edge Lambda needs Cognito. To break that
+# cycle, apply in two phases driven by cloudfront_domain:
+#
+#   Phase 1 - leave cloudfront_domain empty:
+#     enable_auth       = true
+#     cloudfront_domain = ""
+#     terraform apply
+#     terraform output live_refresh_dashboard_url
+#       -> e.g. https://dxxxxxxxxxxxxx.cloudfront.net/
+#     (CloudFront is up with NO edge auth yet; Cognito exists with a
+#      placeholder callback.)
+#
+#   Phase 2 - set cloudfront_domain to that host (no scheme, no trailing slash):
+#     cloudfront_domain = "dxxxxxxxxxxxxx.cloudfront.net"
+#     terraform apply
+#     (Real Cognito callbacks + Lambda@Edge gate now live on the distribution.)
+#
+# Set a bootstrap login and its password:
+#     test_user_email = "you@example.com"
+#     terraform apply
+#     eval "$(terraform output -raw live_refresh_test_user_password_command)"
+#       (edit the placeholder password in that command first)
+#
+enable_auth       = true
+cloudfront_domain = ""
+test_user_email   = ""
+
+tags = {
+  project     = "cs360-cqm"
+  environment = "dev"
+  owner       = "REPLACE_WITH_YOUR_TEAM_OR_EMAIL"
+}

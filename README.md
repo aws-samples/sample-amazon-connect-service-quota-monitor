@@ -6,196 +6,256 @@ Get an email before your Amazon Connect quotas run out, instead of finding out w
 
 Amazon Connect enforces service quotas on almost everything: phone numbers, contact flows, queues, concurrent calls, and the rate at which you can call its APIs. When you hit one, the failure usually shows up in production as a dropped call or a throttled API, and by then it is a customer-facing incident.
 
-This tool watches those quotas for you. A Lambda function runs on a schedule (hourly by default), discovers every Connect instance in your account and Region, measures how close each quota is to its limit, and emails you when something crosses a threshold you set. It reads usage from the Connect APIs, CloudWatch, and Service Quotas, and it stores a JSON report of every run so you have a record over time.
+This solution has two parts:
 
-You deploy it once with a single command. There is no code to write.
+1. **Quota monitor.** A Lambda function runs on a schedule (hourly by default), discovers every Connect instance in your account and Region, measures how close each quota is to its limit, and emails you through SNS when something crosses a threshold you set. It reads usage from the Connect APIs, CloudWatch, and Service Quotas, and stores a JSON report of every run in S3 and (optionally) DynamoDB.
+2. **Live-refresh dashboard.** A second Lambda runs on its own schedule and regenerates a consolidated HTML dashboard of the same quota data, plus a `/quota` API that answers history queries (`?history=1h`, `1d`, `7d`, `trend`) for the trend chart on the page.
 
-## The pieces, and what each one produces
+You do not write any code; you set a few variables and deploy.
 
-The repository looks like several scripts, so here is what each one is for and what it gives you. You do not run them together. The monitor stands on its own. The rest are optional tools you run when you want a visual snapshot.
+## Two ways to deploy
 
-| You run | What it is | What you get | Where it lands |
-|---------|-----------|--------------|----------------|
-| `./deploy.sh` | The monitor. CloudFormation stack plus a scheduled Lambda. This is the product. | A JSON report every run, and an email when a quota crosses your threshold. No HTML. | S3 (`connect-reports/...`) and your inbox |
-| `quota_report_to_html.py` | A small converter | An HTML table of every quota with a utilization bar, built from a monitor JSON report | A local `.html` file you open in a browser |
-| `connect-resource-mapper.py` | An on-demand deep scan of one instance | An interactive dashboard plus a consolidated report, and two JSON files (the full resource map and a quota impact model) | Local files: `connect-dashboard.html`, `connect-api-report.html`, and the two `.json` files |
-| `live-refresh/` stack | An optional second stack | A dashboard that refreshes on a schedule and is served from an S3 website | S3 static website |
+Pick one. Both deploy the same two Lambdas from the same `lambda_function.py`, so the monitoring behavior is identical. They differ in how the dashboard is exposed:
 
-A few things follow from that table:
+| | Terraform | CloudFormation |
+|---|-----------|----------------|
+| Entry point | `terraform apply` in [terraform/](terraform/) | `./deploy.sh` with the root [connect-quota-monitor-cfn.yaml](connect-quota-monitor-cfn.yaml) (monitor) and [live-refresh/template.yaml](live-refresh/template.yaml) (dashboard, SAM) |
+| Dashboard exposure | Private S3 + CloudFront (Origin Access Control) with a **Cognito login gate** on the dashboard and its `/quota` API (Lambda@Edge) | API Gateway endpoint, **no built-in login gate** (the SAM template leaves auth to you: add an `AWS_IAM` or Cognito authorizer before exposing it) |
+| Best for | A polished, customer-facing dashboard that must not be reachable without a login | Teams already standardized on CloudFormation, or who only want the monitor + alerts and will gate or skip the dashboard themselves |
 
-The deployed monitor writes JSON, not HTML. If you want a page you can look at, you run `quota_report_to_html.py` on a stored report for the quota table, or `connect-resource-mapper.py` for the topology dashboard. The `connect-resource-mapper.py` script uses two helper modules, `dashboard_v4.py` and `consolidated_report.py`, to render its HTML. You never call those directly.
+If reaching the dashboard without a username and password would be a problem for you, use the Terraform path; its login gate is built in. The two deployment paths are independent; do not run both against the same account without changing names, or their resources will collide.
 
-The monitor and the mapper share the same list of quota definitions (`quota_definitions.json`) but run independently. Nothing about alerting depends on the dashboard tools, and nothing about the dashboard depends on the monitor being deployed.
+## Architecture
 
-## Deploy the monitor
+```
+                    EventBridge (rate(1 hour))
+                            |
+                            v
+   +---------------------------------------------+
+   |  quota-monitor Lambda (python3.13)           |
+   |  - Connect / Service Quotas / CloudWatch      |
+   |  - reads/writes S3 + DynamoDB (optional)      |
+   |  - publishes to SNS on threshold breach       |
+   +---------------------------------------------+
+         |            |              |
+         v            v              v
+   S3 (metrics)   DynamoDB      SNS -> email
 
-You need the AWS CLI configured, plus `bash` and `zip` on your machine. See [docs/GETTING_STARTED.md](docs/GETTING_STARTED.md) if you are setting up the CLI for the first time.
+                    EventBridge (rate(1 hour))
+                            |
+                            v
+   +---------------------------------------------+
+   |  live-refresh Lambda (python3.13, arm64)     |
+   |  - CloudWatch + Service Quotas                |
+   |  - writes latest.json / archive / index.html  |
+   +---------------------------------------------+
+         |                              ^
+         v                              |
+   S3 dashboard bucket (private,  API Gateway (prod stage,
+   OAC only, no public access)    throttled) -> GET/OPTIONS /quota
+         |                              ^
+         v                              |
+   CloudFront + Cognito login    Cognito authorizer
+   gate (Lambda@Edge)                   |
+         |                              |
+         +-------- Browser --------+
+```
+
+The two Lambda functions are independent. `quota-monitor` does the account-wide quota scan and alerting; it has no dashboard. `live-refresh` produces the dashboard and its API; it does not send alerts. Setting `deploy_live_refresh = false` in Terraform skips the dashboard entirely and leaves you with alerting only.
+
+## Prerequisites
+
+| What | Version | How to check |
+|------|---------|---------------|
+| AWS account with credentials configured | any | `aws sts get-caller-identity` |
+| Terraform | >= 1.6 | `terraform version` |
+| git | any | `git --version` |
+| AWS CLI | v2 | `aws --version` |
+| An Amazon Connect instance | already created in your account | `aws connect list-instances --query "InstanceSummaryList[].{Id:Id,Alias:InstanceAlias}"` |
+
+You need the Connect instance ID for `connect_instance_id` if you deploy the live-refresh dashboard. The quota-monitor Lambda does not take an instance ID; it discovers every instance in the account and Region on each run by calling `connect:ListInstances`.
+
+If `enable_auth = true` (the default), the stack includes a Lambda@Edge function, which AWS only lets you create in `us-east-1`. Keep `region` set to `us-east-1` if you use the login gate; the quota monitor itself still works against a Connect instance in any Region.
+
+## Deploy with Terraform
+
+Full step-by-step instructions, including the two-phase apply required for the Cognito login gate, are in [terraform/README.md](terraform/README.md). The short version:
+
+```bash
+git clone https://github.com/aws-samples/sample-amazon-connect-service-quota-monitor.git
+cd sample-amazon-connect-service-quota-monitor/terraform
+
+cp terraform.tfvars.example terraform.tfvars
+# edit terraform.tfvars: set connect_instance_id, notification_email, tags.owner
+
+terraform init
+terraform plan
+terraform apply
+# This apply is phase 1 of 2 and creates a login gate with no user yet. To
+# reach the dashboard, continue to "Dashboard login gate (two-phase apply)" below.
+```
+
+`terraform apply` finishes with a list of outputs, including `live_refresh_dashboard_url` and `sns_topic_arn`.
+
+If you set `notification_email`, check that inbox for an SNS subscription confirmation and click "Confirm subscription." Alerts do not deliver until you confirm it.
+
+**Dashboard login gate (two-phase apply).** With `enable_auth = true` (the default), the dashboard and `GET /quota` sit behind Cognito. The Cognito callback URL needs the CloudFront domain, which does not exist until after an apply has run, so reaching the dashboard takes two applies total. The apply you already ran above is phase 1: `cloudfront_domain` was empty, so CloudFront came up with no edge auth attached yet. Read its domain, then run phase 2:
+
+```bash
+terraform output live_refresh_dashboard_url   # -> https://dXXXX.cloudfront.net/
+
+# Phase 2: set cloudfront_domain in terraform.tfvars to that host (no scheme, no trailing slash)
+terraform apply
+```
+
+Set a bootstrap login and its password (set `test_user_email` in `terraform.tfvars` first). The password must be at least 12 characters and include an uppercase letter, a lowercase letter, a number, and a symbol:
+
+```bash
+eval "$(terraform output -raw live_refresh_test_user_password_command)"
+# edit the placeholder password in that command before running it
+```
+
+Log in at the Cognito hosted-UI prompt (it appears when you open `live_refresh_dashboard_url`) using the `test_user_email` you set and the password from the command above.
+
+See [terraform/README.md](terraform/README.md) and [terraform/modules/live-refresh/README.md](terraform/modules/live-refresh/README.md) for the full detail on why the two phases are needed and what each one creates.
+
+## Deploy with CloudFormation
+
+The CloudFormation path uses `deploy.sh`, which packages the Lambda code (`lambda_function.py` + `quota_definitions.json`), uploads it to an S3 bucket it manages, and creates or updates the stack from [connect-quota-monitor-cfn.yaml](connect-quota-monitor-cfn.yaml). It needs the AWS CLI v2 and a bash shell.
 
 ```bash
 git clone https://github.com/aws-samples/sample-amazon-connect-service-quota-monitor.git
 cd sample-amazon-connect-service-quota-monitor
 
-./deploy.sh --email your-team@example.com
+# Deploy the monitor + alerts. --email subscribes an address to the alert topic.
+./deploy.sh --email you@example.com --threshold 80
+
+# Options: --stack-name NAME, --threshold 1-99, --runtime, --memory,
+#          --vpc-id vpc-xxxx --subnet-ids subnet-a,subnet-b. Run ./deploy.sh --help.
 ```
 
-Use `deploy.sh`, not a plain `aws cloudformation deploy`. The Lambda code plus its quota definitions are larger than CloudFormation's inline code limit, so the template ships a tiny placeholder and `deploy.sh` uploads the real code through S3 after the stack is created. A raw `cloudformation deploy` would leave you with the placeholder and no monitoring.
+Confirm the SNS subscription email when it arrives, or alerts will not deliver.
 
-Common options:
+The dashboard is a separate SAM stack ([live-refresh/template.yaml](live-refresh/template.yaml)) deployed with the AWS SAM CLI:
 
 ```bash
-./deploy.sh --email your-team@example.com --threshold 80 --schedule "rate(1 hour)"
+cd live-refresh
+sam build && sam deploy --guided   # answer the prompts; re-run without --guided after the first time
 ```
 
-Run `./deploy.sh --help` for the full list.
+Important: the SAM dashboard stack exposes its `/quota` API through API Gateway with **no login gate**. If anyone with the URL should not be able to read your quota data, add an `AWS_IAM` or Cognito authorizer to `DashboardApi` in the template before you deploy it, or use the Terraform path, whose Cognito login gate is built in. This is the one real difference between the two deployment methods.
 
-## Confirm your email
+Tear the CloudFormation deployment down with `aws cloudformation delete-stack --stack-name <name>` (and `sam delete` for the dashboard stack). Empty the S3 buckets first if you want them removed.
 
-After the first deploy, check your inbox for an SNS subscription confirmation and click "Confirm subscription". Alerts are not delivered until you confirm.
+## Where the reports and dashboard live
 
-## What happens on each run
+| Output | Where | How to read it |
+|--------|-------|-----------------|
+| Alert email | your inbox via SNS | confirm the subscription once, then alerts arrive by email |
+| JSON quota reports | S3 metrics bucket (`s3_bucket_name` output), and DynamoDB if `use_dynamodb = true` | see the command below the table |
+| Dashboard | private S3 bucket, served through CloudFront + Cognito | open `terraform output live_refresh_dashboard_url` in a browser and log in |
+| `/quota` history API | API Gateway behind Cognito | `GET /quota`, `?history=1h`, `?history=1d`, `?history=7d`, `?history=trend` |
 
-The Lambda checks every quota it can measure and emails you one consolidated message per instance if anything is at or above your threshold. The email lists the quotas that are close, their current usage, their limits, and the instance affected. If nothing is close, it stays quiet.
+You have a few ways to get at the data, pick whichever fits:
 
-## How it finds your instances
+- **Read the latest JSON report from S3** (needs your AWS credentials):
 
-You do not give the monitor an instance ID. On each run it calls `connect:ListInstances` to find every Connect instance in the account and Region, then reads each instance's resources (queues, flows, users, Lambda associations, and so on) with instance-scoped `List` and `Describe` calls, and pulls rate and concurrency usage from CloudWatch and Service Quotas. That is why no instance ID is configured, and why a hardcoded one is treated as a mistake. The read-only permissions it needs are in [iam/README.md](iam/README.md); the key one for discovery is `connect:ListInstances`.
+  ```bash
+  aws s3 cp s3://$(terraform output -raw s3_bucket_name)/connect-reports/latest/latest-report.json - | jq .
+  ```
 
-The two manual tools do target one instance. Find an instance ID in the Connect console URL (`.../instance/<INSTANCE_ID>/...`) or with:
+- **Share the report as a time-limited link** (a presigned URL anyone can open in a browser for the duration, no AWS login required). The report bucket is private, so this is how you hand the report to someone without giving them account access:
+
+  ```bash
+  aws s3 presign s3://$(terraform output -raw s3_bucket_name)/connect-reports/latest/latest-report.json --expires-in 3600
+  ```
+
+  The link expires after the number of seconds you pass (3600 = one hour) and embeds a temporary credential, so treat it as sensitive and do not commit it.
+
+- **Query it live through the API** (behind the Cognito login, same as the dashboard): `GET /quota`, plus `?history=1h|1d|7d|trend`.
+
+- **Open the dashboard** for the human-readable view: `terraform output live_refresh_dashboard_url`, then log in.
+
+Historical runs are also kept under `connect-reports/<date>/` in the same bucket, and in DynamoDB when `use_dynamodb = true`.
+
+## Teardown
 
 ```bash
-aws connect list-instances --query "InstanceSummaryList[].{Id:Id,Alias:InstanceAlias}"
+cd terraform
+terraform destroy
 ```
 
-Pass it as `--instance-id` to the mapper, or as the `ConnectInstanceId` parameter to the live-refresh stack.
+By default `force_destroy = false`, so `terraform destroy` fails rather than silently deleting buckets that still hold objects (the metrics bucket, the access-log bucket, and the dashboard bucket). Set `force_destroy = true` in `terraform.tfvars` and re-run `terraform destroy` only when you are certain you do not need the stored history. `terraform destroy` does not touch a bucket you supplied yourself through `report_bucket_name`, since Terraform never created it.
 
-## Where the reports go
+If you deployed with `enable_auth = true`, `terraform destroy` can fail once on the edge-auth Lambda@Edge function with `InvalidParameterValueException: ... replicated function`. CloudFront removes the edge replicas asynchronously, which can take tens of minutes up to a few hours. Wait, then re-run `terraform destroy`. See [terraform/README.md](terraform/README.md) for the full explanation.
 
-The email is the alert. The JSON reports are the record. With S3 storage on (the default), every run writes to the metrics bucket, whose name is the `S3BucketName` stack output:
+## Cost
 
-| Object | Cadence |
-|--------|---------|
-| `connect-reports/latest/latest-report.json` | Overwritten every run. Always the newest. |
-| `connect-reports/<date>/report_<HHMMSS>.json` | One per run, kept as history. |
-| `connect-account-metrics/latest/account-metrics.json` (and dated copies) | Account-level quotas |
-| `connect-metrics/latest/<instance-id>.json` (and dated copies) | Per-instance quotas |
+Rough monthly cost at the default `rate(1 hour)` schedule; see [terraform/README.md](terraform/README.md) for the full breakdown by module.
 
-Read them from the CLI:
+| Component | Pilot (1 instance) | Production (larger account) |
+|-----------|---------------------|-------------------------------|
+| Lambda (quota-monitor + live-refresh, hourly) | about $1 to $3 | up to about $7 |
+| DynamoDB (on-demand, default on) | $0.25 to $2.00 | about $3 |
+| S3 (metrics, access logs, dashboard) | $0.10 to $0.50 | about $1 |
+| CloudFront + Cognito | a few cents at low traffic | about $1 to $2 |
+| SNS (email) | about $0.10 | about $0.10 |
+| CloudWatch (alarms and logs) | $0.50 to $1.00 | about $1.50 |
+| KMS (3 keys, quota-monitor module) | about $3 (3 x $1/mo per key, flat regardless of traffic) | about $3 |
+| **Total** | **about $6 to $10** | **about $15 to $20** |
 
-```bash
-BUCKET=$(aws cloudformation describe-stacks --stack-name ConnectQuotaMonitor \
-  --query "Stacks[0].Outputs[?OutputKey=='S3BucketName'].OutputValue" --output text)
+KMS is the one line item that does not scale down with traffic. Set `use_dynamodb = false` and `use_s3_storage = false` if you only want alerting and no stored history. Cost grows mainly with schedule frequency: a tighter schedule than `rate(1 hour)` multiplies Lambda invocations and CloudWatch `GetMetricData` calls close to linearly. It does not spike nonlinearly at any scale covered by this design.
 
-aws s3 cp "s3://$BUCKET/connect-reports/latest/latest-report.json" - | jq .
-aws s3 ls "s3://$BUCKET/connect-reports/" --recursive
-```
+## Known limitations
 
-The `latest/` objects are overwritten at the schedule cadence (hourly by default). The dated reports pile up as history. If you turn on DynamoDB storage, the same records are written there too.
+- The live-refresh module does not create the S3 bucket you point it at with `report_bucket_name`. Leave that variable empty (the default) and the module creates and manages its own private dashboard bucket instead.
+- Single account, single region. Nothing in this repository assumes cross-account or cross-region deployment.
+- No remote Terraform backend is configured. State defaults to the local `terraform.tfstate` file in `terraform/` unless you add your own `backend` block. Start from [terraform/backend.tf.example](terraform/backend.tf.example) to enable remote state.
+- No AWS WAF or CloudFront access logging is configured on the dashboard distribution. The login gate and stage throttling are in place; a WAF rate rule and access logs are reasonable additions before high-traffic production use.
+- The login gate (`enable_auth = true`, the default) requires `region = us-east-1`, because it uses Lambda@Edge, which AWS only creates in us-east-1. Terraform now fails fast with a clear message if you set another region with auth on. To run the dashboard in another region, set `enable_auth = false` (the dashboard then has no Cognito login).
+- Monitor run time grows with the number of Connect instances and quotas. Each instance is scanned serially, and the Lambda runs with `reserved_concurrent_executions = 1` and no retries, so on an account with roughly 30+ active instances the run can approach the Lambda timeout (default 600s, max 900s). If you have many instances, raise `lambda_timeout`, and watch the new Lambda `Duration` and `Throttles` alarms. Very large estates are not yet parallelized.
+- First-run dashboard: the dashboard shows a "being generated" placeholder until the first scheduled `live-refresh` run writes real data (up to one schedule interval, `rate(1 hour)` by default). On an instance with thousands of contact flows, the resource crawl can approach the `live-refresh` Lambda timeout; if the dashboard stays on the placeholder, raise that Lambda's timeout.
+- Two-phase apply and the login gate: between phase 1 and phase 2, the dashboard shell is reachable without a login (its `/quota` API is still gated). Complete phase 2 promptly, or leave `enable_auth = false` if you do not want the gate at all.
+- The Cognito app-client secret is baked into the Lambda@Edge bundle (Lambda@Edge cannot use environment variables) and, with local state, is stored in `terraform.tfstate`. Use an encrypted remote backend (see [terraform/backend.tf.example](terraform/backend.tf.example)) and restrict `lambda:GetFunction` on any deploy role.
+- A logged-in dashboard session lasts 60 minutes (the Cognito id-token lifetime). After it expires, an in-page history fetch fails once; reload the page to log in again.
 
-To turn a stored report into a page you can read:
+### Tuning knobs
 
-```bash
-aws s3 cp "s3://$BUCKET/connect-reports/latest/latest-report.json" ./report.json
-python3 quota_report_to_html.py ./report.json ./quota-report.html
-open ./quota-report.html
-```
-
-## Configuration
-
-These are `deploy.sh` flags, and the same names exist as CloudFormation parameters:
-
-| Setting | Default | Meaning |
-|---------|---------|---------|
-| `--email` | required | Where breach alerts go |
-| `--threshold` | `80` | Alert when a quota is at or above this percent |
-| `--schedule` | `rate(1 hour)` | How often the Lambda runs (a `rate()` or `cron()` expression) |
-| `UseS3Storage` | `true` | Keep JSON reports in S3 |
-| `UseDynamoDBStorage` | `false` | Also keep records in DynamoDB |
-
-To change the threshold or schedule later, run `deploy.sh` again with the new values, or update the CloudFormation stack directly.
-
-## Optional: the on-demand dashboard
-
-When you want to see your whole topology and where each quota sits, scan one instance and open the dashboard it writes:
-
-```bash
-python3 -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
-
-python3 connect-resource-mapper.py \
-  --instance-id YOUR_INSTANCE_ID \
-  --region us-east-1 \
-  --output-dir ./output
-
-open ./output/connect-dashboard.html
-```
-
-The output is a self-contained HTML file with capacity meters per quota, the resource topology (phone numbers, flows, Lambdas, quotas), and a migration wave planner. It needs no server. Alongside it you get `connect-api-report.html` and the raw JSON (`connect-resource-map.json`, `connect-quota-impact-model.json`).
-
-Some of the per-line volume figures in that dashboard are estimates derived from resource counts, not live traffic. The quota utilization, API rate usage, and capacity numbers are measured from CloudWatch and Service Quotas.
-
-For screenshots of all three views (the quota limit report, the operations dashboard, and the consolidated API report) and a walkthrough of what each one shows, see [docs/reports-and-dashboards.md](docs/reports-and-dashboards.md).
-
-## Architecture
-
-The monitor:
-
-```
-CloudFormation deploys:
-  EventBridge (schedule) -> Lambda -> Connect APIs + CloudWatch + Service Quotas
-                             |
-                             |-- quota at/over threshold? -> SNS -> email
-                             |-- JSON reports -> S3 (connect-reports/, connect-metrics/)
-                             \-- optional records -> DynamoDB
-```
-
-The on-demand dashboard:
-
-```
-connect-resource-mapper.py -> Connect APIs (phone numbers, flows, Lambdas, quotas)
-                              \-> connect-dashboard.html + connect-api-report.html
-```
+| Variable | Default | Effect |
+|----------|---------|--------|
+| `lambda_timeout` | 600 | Monitor Lambda timeout in seconds (60-900). Raise for many instances. |
+| `dynamodb_ttl_days` | 90 | Auto-expiry for stored DynamoDB records. Set to 0 to keep records forever. |
+| `send_allclear_heartbeat` | false | When true, a healthy run with no violations still publishes an "all clear" SNS message, so silence is not mistaken for a working monitor. |
+| `threshold_percentage` | 80 | Utilization percentage that counts as a violation. |
 
 ## Documentation
 
 | Topic | Link |
 |-------|------|
-| Full getting started, all platforms | [docs/GETTING_STARTED.md](docs/GETTING_STARTED.md) |
+| Terraform deploy, all variables, teardown, two-phase auth apply | [terraform/README.md](terraform/README.md) |
+| CloudFormation monitor template | [connect-quota-monitor-cfn.yaml](connect-quota-monitor-cfn.yaml) |
+| CloudFormation deploy script (`--help` for options) | [deploy.sh](deploy.sh) |
+| SAM dashboard template (no built-in login gate) | [live-refresh/template.yaml](live-refresh/template.yaml) |
+| quota-monitor module detail | [terraform/modules/quota-monitor/README.md](terraform/modules/quota-monitor/README.md) |
+| live-refresh module detail, login gate internals | [terraform/modules/live-refresh/README.md](terraform/modules/live-refresh/README.md) |
+| Operations guide (schedule, history queries, logs) | [docs/operations-guide.md](docs/operations-guide.md) |
 | Reports and dashboards, with screenshots | [docs/reports-and-dashboards.md](docs/reports-and-dashboards.md) |
 | IAM permissions required | [iam/README.md](iam/README.md) |
-| Operations guide (archives, peaks) | [docs/operations-guide.md](docs/operations-guide.md) |
-| Scheduled dashboard refresh stack | [live-refresh/README.md](live-refresh/README.md) |
-
-## Cost
-
-Rough monthly cost, which scales mostly with how many instances and quotas you have:
-
-| Component | Estimate |
-|-----------|----------|
-| Lambda (hourly) | $1 to $3 |
-| S3 (report history) | $0.10 to $0.50 |
-| DynamoDB (if enabled, on-demand) | $0.25 to $2.00 |
-| SNS (email) | about $0.10 |
-| CloudWatch (alarms and logs) | $0.50 to $1.00 |
-| Pilot total | about $3 |
-| Larger production account | about $8 |
+| Live-refresh component detail | [live-refresh/README.md](live-refresh/README.md) |
+| Local report generation (optional CLI tool, no deploy, no auth) | [docs/GETTING_STARTED.md](docs/GETTING_STARTED.md) |
 
 ## Common issues
 
 | Symptom | Likely cause and fix |
 |---------|----------------------|
-| No alert emails | You have not confirmed the SNS subscription. Check your inbox and click "Confirm subscription". |
-| The Lambda just logs "run deploy.sh" | You deployed the CloudFormation template directly. Run `./deploy.sh` so the real code is uploaded. |
+| No alert emails | You have not confirmed the SNS subscription. Check your inbox and click "Confirm subscription." |
+| `GET /quota` returns HTTP 503 | You set `report_bucket_name` to a bucket the module does not manage and it does not exist, or you have not applied at all yet. Leave `report_bucket_name` empty to let the module create its own dashboard bucket. |
+| Dashboard login loop / callback error | You are on the phase-1 apply (`cloudfront_domain` empty) but trying to log in already. Finish phase 2 first: set `cloudfront_domain` to the CloudFront host and `terraform apply` again. |
 | Rate quotas all read 0% | The rate metrics only appear when those APIs are being called. An idle instance reads zero, which is correct. |
-| "Access Denied" in the logs | The execution role is missing a permission. See [iam/README.md](iam/README.md). |
-| Too many alerts | Raise `--threshold` (for example to 90). |
-
-## Cleanup
-
-```bash
-aws cloudformation delete-stack --stack-name ConnectQuotaMonitor --region us-east-1
-```
-
-The metrics and report buckets are retained on stack deletion so you do not lose history by accident. Empty and delete them by hand when you are done with the data.
+| "Access Denied" in the Lambda logs | The execution role is missing a permission. See [iam/README.md](iam/README.md) and the IAM section of each module README. |
+| Too many alerts | Raise `threshold_percentage` in `terraform.tfvars` (for example to 90) and `terraform apply` again. |
+| `terraform destroy` fails on a bucket | `force_destroy = false` (the default) refuses to delete a non-empty bucket. Empty it yourself or set `force_destroy = true` and re-run. |
+| `terraform destroy` fails with `InvalidParameterValueException: ... replicated function` | `enable_auth = true` deployed a Lambda@Edge function, and CloudFront has not finished removing its edge replicas yet. Wait (tens of minutes up to a few hours) and re-run `terraform destroy`. |
 
 ## License
 

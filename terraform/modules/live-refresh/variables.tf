@@ -27,6 +27,12 @@ variable "line_config_s3_key" {
   default     = "line-config.json"
 }
 
+variable "monitor_report_bucket" {
+  description = "S3 bucket holding the core quota-monitor's consolidated report (connect-reports/latest/latest-report.json). When set, the dashboard's Quotas tab is built from the monitor's hourly findings instead of an independent scan. Wired automatically from the quota-monitor module; empty falls back to the resource-mapper's own quota model."
+  type        = string
+  default     = ""
+}
+
 variable "report_bucket_name" {
   description = "Existing S3 bucket for dashboard reports, archives, and peak files. Leave empty to have this module create its own dashboard bucket (see create_dashboard_bucket) - a PRIVATE bucket served to viewers via CloudFront + Origin Access Control, never a public bucket - or to disable report storage entirely by also setting create_dashboard_bucket = false."
   type        = string

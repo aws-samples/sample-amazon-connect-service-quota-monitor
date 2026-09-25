@@ -15,7 +15,8 @@ schedule_expression   = "rate(1 hour)"
 use_dynamodb   = true
 use_s3_storage = true
 
-lambda_timeout      = 300
+lambda_timeout            = 600   # serial scan across ~450+ discovered quotas; raise for large estates
+lambda_max_retry_attempts = 2     # retries on a failed/timed-out run (0-2); lower if SQ throttles
 lambda_memory       = 512
 log_retention_days  = 30
 

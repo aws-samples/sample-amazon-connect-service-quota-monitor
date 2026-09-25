@@ -18,7 +18,7 @@ TEMPLATE_FILE="connect-quota-monitor-cfn.yaml"
 PYTHON_SCRIPT="lambda_function.py"
 # Data file the Lambda loads at import time (quota_definitions.json). Must be
 # packaged alongside the code, or the function silently falls back to a single
-# hardcoded quota definition instead of all 112.
+# hardcoded quota definition instead of the full dynamically discovered set.
 QUOTA_DEF_FILE="quota_definitions.json"
 
 # Default parameters (can be overridden via environment variables)
@@ -600,7 +600,7 @@ display_deployment_summary() {
     
     # Enhanced capabilities
     echo "🚀 ENHANCED CAPABILITIES:"
-    echo "   ✅ 112 Connect quota monitoring across all services"
+    echo "   ✅ Dynamic Connect-family quota monitoring across all services"
     echo "   ✅ Dynamic instance discovery (no hardcoded references)"
     echo "   ✅ Consolidated alerting (one email per instance)"
     echo "   ✅ Flexible storage (S3 and/or DynamoDB)"

@@ -12,22 +12,23 @@ locals {
 module "quota_monitor" {
   source = "./modules/quota-monitor"
 
-  name_prefix             = var.name_prefix
-  notification_email      = var.notification_email
-  threshold_percentage    = var.threshold_percentage
-  schedule_expression     = var.schedule_expression
-  use_dynamodb            = var.use_dynamodb
-  use_s3_storage          = var.use_s3_storage
-  lambda_timeout          = var.lambda_timeout
-  lambda_memory           = var.lambda_memory
-  log_retention_days      = var.log_retention_days
-  vpc_id                  = var.vpc_id
-  subnet_ids              = var.subnet_ids
-  force_destroy           = var.force_destroy
-  dynamodb_ttl_days       = var.dynamodb_ttl_days
-  send_allclear_heartbeat = var.send_allclear_heartbeat
-  repo_root               = local.repo_root
-  tags                    = local.common_tags
+  name_prefix               = var.name_prefix
+  notification_email        = var.notification_email
+  threshold_percentage      = var.threshold_percentage
+  schedule_expression       = var.schedule_expression
+  use_dynamodb              = var.use_dynamodb
+  use_s3_storage            = var.use_s3_storage
+  lambda_timeout            = var.lambda_timeout
+  lambda_max_retry_attempts = var.lambda_max_retry_attempts
+  lambda_memory             = var.lambda_memory
+  log_retention_days        = var.log_retention_days
+  vpc_id                    = var.vpc_id
+  subnet_ids                = var.subnet_ids
+  force_destroy             = var.force_destroy
+  dynamodb_ttl_days         = var.dynamodb_ttl_days
+  send_allclear_heartbeat   = var.send_allclear_heartbeat
+  repo_root                 = local.repo_root
+  tags                      = local.common_tags
 }
 
 module "live_refresh" {
@@ -41,6 +42,7 @@ module "live_refresh" {
   line_config_s3_bucket   = var.line_config_s3_bucket
   line_config_s3_key      = var.line_config_s3_key
   report_bucket_name      = var.report_bucket_name
+  monitor_report_bucket   = module.quota_monitor.s3_bucket_name
   create_dashboard_bucket = var.create_dashboard_bucket
   force_destroy           = var.force_destroy
   schedule_expression     = var.schedule_expression

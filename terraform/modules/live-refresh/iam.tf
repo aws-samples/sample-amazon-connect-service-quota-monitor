@@ -85,6 +85,15 @@ resource "aws_iam_role_policy" "metrics_inline" {
           Resource = "arn:${local.partition}:s3:::${local.effective_report_bucket}"
         }
       ] : [],
+      var.monitor_report_bucket != "" ? [
+        {
+          # Read the core monitor's consolidated report so the dashboard's
+          # Quotas tab reflects the hourly scan (single source of truth).
+          Effect   = "Allow"
+          Action   = ["s3:GetObject"]
+          Resource = "arn:${local.partition}:s3:::${var.monitor_report_bucket}/connect-reports/*"
+        }
+      ] : [],
     )
   })
 }

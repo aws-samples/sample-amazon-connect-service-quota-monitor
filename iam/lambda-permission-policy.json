@@ -9,6 +9,7 @@
         "connect:Describe*",
         "connect:GetTrafficDistribution",
         "servicequotas:ListServiceQuotas",
+        "servicequotas:ListServices",
         "cloudwatch:GetMetricData",
         "cloudwatch:GetMetricStatistics"
       ],

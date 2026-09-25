@@ -76,6 +76,17 @@ variable "lambda_timeout" {
   }
 }
 
+variable "lambda_max_retry_attempts" {
+  description = "Async invocation retry attempts for failed/timed-out monitor runs (0-2). 2 enables retries; lower toward 0 if retries cause Service Quotas throttling."
+  type        = number
+  default     = 2
+
+  validation {
+    condition     = var.lambda_max_retry_attempts >= 0 && var.lambda_max_retry_attempts <= 2
+    error_message = "lambda_max_retry_attempts must be between 0 and 2 (AWS async invocation limit)."
+  }
+}
+
 variable "lambda_memory" {
   description = "Quota monitor Lambda function memory in MB (256-10240)."
   type        = number

@@ -284,6 +284,63 @@ def _get_quota_limits(sq: Any) -> dict[str, float]:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
+def _load_monitor_model(bucket: str, key: str) -> dict[str, Any] | None:
+    """Build the consolidated-report quota model from the CORE monitor's hourly
+    report, so the dashboard's Quotas tab reflects the same findings as the
+    hourly scan (single source of truth) rather than an independent scan.
+
+    Reads the monitor's consolidated report (connect-reports/latest/latest-report.json)
+    from the monitor's metrics bucket, flattens account + per-instance rows, and
+    maps the MEASURED rows into the quota_headroom shape the renderer expects.
+    Limit-only rows (no usage published by AWS) carry no utilization to chart, so
+    they are omitted from the Quotas tab (they remain in the monitor's report and
+    alerts). Returns None when the report is unavailable, so the caller can fall
+    back to the resource-mapper's own quota model.
+    """
+    if not bucket:
+        return None
+    s3 = boto3.client("s3")
+    try:
+        obj = s3.get_object(Bucket=bucket, Key=key)
+        report = json.loads(obj["Body"].read())
+    except ClientError as e:
+        logger.warning("Monitor report unavailable at s3://%s/%s: %s", bucket, key, e)
+        return None
+    except (ValueError, KeyError) as e:
+        logger.warning("Monitor report at s3://%s/%s is unreadable: %s", bucket, key, e)
+        return None
+
+    mr = report.get("monitoring_results", {}) or {}
+    rows = list(mr.get("account_results", []) or [])
+    for inst in (mr.get("instance_results", {}) or {}).values():
+        rows.extend(inst.get("results", []) or [])
+
+    headroom: dict[str, Any] = {}
+    for r in rows:
+        # Only MEASURED rows have a real utilization to chart; limit-only /
+        # unavailable rows are skipped (nothing to plot, never a false 0%).
+        if r.get("usage_status") != "MEASURED":
+            continue
+        util = r.get("utilization_percentage")
+        if util is None:
+            continue
+        usage = r.get("current_usage") or 0
+        limit = r.get("quota_limit") or 0
+        headroom[r.get("quota_code", "") or r.get("quota_name", "")] = {
+            "name": r.get("quota_name", ""),
+            "limit": limit,
+            "peak_tps": round(usage, 2) if isinstance(usage, (int, float)) else usage,
+            "utilization_pct": round(util, 1),
+            "headroom_tps": round(limit - usage, 2)
+            if isinstance(usage, (int, float)) and isinstance(limit, (int, float)) else 0,
+        }
+
+    if not headroom:
+        return None
+    logger.info("Loaded %d measured quota(s) from monitor report for the dashboard", len(headroom))
+    return {"quota_headroom": headroom}
+
+
 def _write_latest(bucket: str, snapshot: dict[str, Any]) -> None:
     """Run the full resource mapper and upload the API report HTML to S3.
 
@@ -313,7 +370,14 @@ def _write_latest(bucket: str, snapshot: dict[str, Any]) -> None:
         from mapper_bridge import collect_all
         from consolidated_report import generate_consolidated_report_string
 
-        resource_map, model = collect_all(instance_id, region)
+        resource_map, mapper_model = collect_all(instance_id, region)
+        # Quotas tab reflects the CORE monitor's hourly findings (read from its
+        # S3 report); the other tabs (flows, Lambdas, per-flow APIs) stay from
+        # the resource-mapper crawl. Falls back to the mapper's own quota model
+        # if the monitor report is not yet available.
+        monitor_bucket = os.environ.get("MONITOR_REPORT_BUCKET", "")
+        monitor_key = os.environ.get("MONITOR_REPORT_KEY", "connect-reports/latest/latest-report.json")
+        model = _load_monitor_model(monitor_bucket, monitor_key) or mapper_model
         html = generate_consolidated_report_string(resource_map, model)
 
         s3.put_object(

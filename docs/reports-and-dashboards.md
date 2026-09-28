@@ -17,7 +17,8 @@ open ./quota-report.html
 What you are looking at:
 
 - The tiles across the top summarize the run: how many quotas were checked, how many breached the threshold, and the single highest utilization figure.
-- Quotas are grouped by category (Core Connect, Contact Handling, Routing and Queues, Reporting, Forecasting and Capacity, Integrations, API Rate Limits, Contact Lens). Each group shows a small badge telling you whether anything in it breached.
+- Quotas are grouped by service area within the Amazon Connect family. The set is discovered dynamically from Service Quotas rather than a fixed list, so the groups shown reflect whatever the family currently contains (Connect core, routing/queues, contact handling, integrations, Cases, Customer Profiles, Voice ID, Outbound Campaigns, API rate limits, and more). Each group shows a small badge telling you whether anything in it breached.
+- Quotas whose limit is known but for which AWS does not publish a usage metric appear in a separate "Limit known, usage not measurable" section with a "not measured" badge — surfaced for visibility, never dropped, and not counted as breaches.
 - Every row is one quota with its current usage, its limit, and a utilization bar. Green is comfortable, amber is getting close, red is at or over the threshold. In this example "Phone numbers per instance" is at 5 of 5, so it shows red at 100 percent.
 - The API Rate Limits table lists each throttling quota in transactions per second. An idle instance reads zero for most of these, which is expected, because the rate metrics only appear when those APIs are being called.
 

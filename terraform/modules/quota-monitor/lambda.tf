@@ -77,11 +77,13 @@ resource "aws_lambda_function" "quota_monitor" {
   ]
 }
 
-# A failed/timed-out invocation should not fan out into async retries that
-# storm the shared Service Quotas rate limit; the next scheduled hourly
-# invocation is the retry.
+# Async retry behaviour for failed/timed-out invocations. Configurable via
+# lambda_max_retry_attempts (default 2 = enabled). Retries re-issue the scan and
+# add load to the shared Service Quotas rate limit, and the next scheduled hourly
+# invocation is itself a natural retry -- lower toward 0 if you observe Service
+# Quotas throttling. Failures still land in the DLQ regardless of this setting.
 resource "aws_lambda_function_event_invoke_config" "quota_monitor" {
   function_name = aws_lambda_function.quota_monitor.function_name
 
-  maximum_retry_attempts = 0
+  maximum_retry_attempts = var.lambda_max_retry_attempts
 }

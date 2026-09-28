@@ -72,11 +72,18 @@ class TestZeroLimitReportsUnavailable:
             "service": "connectcampaigns", "default_limit": 0,
         }
 
-    def test_usage_with_zero_limit_returns_none(self):
+    def test_usage_with_zero_limit_reports_unavailable_not_dropped(self):
+        # Contract change (drop -> flag): usage>0 against a 0/unknown limit is no
+        # longer dropped (None). It is emitted as a flagged row so the quota stays
+        # visible, but utilization is null (never a false 0%) and the allocation
+        # is flagged unavailable.
         m = _monitor()
         m._monitor_via_service_quotas = lambda *a, **k: (5, 0)  # usage 5, limit 0
         result = m._process_quota_config("iid", self._config(), "L-E908C3A1")
-        assert result is None, "usage>0 with a 0/unknown limit must be unavailable, not 0%"
+        assert result is not None, "drop->flag: row must be emitted, not dropped"
+        assert result["utilization_percentage"] is None, "must not be a false 0%"
+        assert result["current_usage"] == 5
+        assert result["alloc_status"] == "ALLOCATION_UNAVAILABLE"
 
     def test_zero_usage_zero_limit_is_healthy(self):
         m = _monitor()

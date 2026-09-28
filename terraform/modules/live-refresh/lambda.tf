@@ -63,6 +63,8 @@ resource "aws_lambda_function" "metrics" {
       LINE_CONFIG_S3_BUCKET = var.line_config_s3_bucket
       LINE_CONFIG_S3_KEY    = var.line_config_s3_key
       S3_REPORT_BUCKET      = local.effective_report_bucket
+      MONITOR_REPORT_BUCKET = var.monitor_report_bucket
+      MONITOR_REPORT_KEY    = "connect-reports/latest/latest-report.json"
       API_ENDPOINT          = local.api_endpoint
     }
   }

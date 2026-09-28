@@ -34,9 +34,20 @@ variable "use_s3_storage" {
 }
 
 variable "lambda_timeout" {
-  description = "Lambda function timeout in seconds (60-900)."
+  description = "Monitor Lambda timeout in seconds (60-900). The scan is serial across all dynamically discovered quotas (~450+ in the Connect family), so raise this for large estates. 600 is a safe default for the dynamic catalog."
   type        = number
-  default     = 300
+  default     = 600
+}
+
+variable "lambda_max_retry_attempts" {
+  description = "Async invocation retry attempts for failed/timed-out monitor runs (0-2). 2 enables retries (AWS async max); the next hourly schedule is also a natural retry. Lower toward 0 if retries cause Service Quotas throttling."
+  type        = number
+  default     = 2
+
+  validation {
+    condition     = var.lambda_max_retry_attempts >= 0 && var.lambda_max_retry_attempts <= 2
+    error_message = "lambda_max_retry_attempts must be between 0 and 2 (AWS async invocation limit)."
+  }
 }
 
 variable "lambda_memory" {

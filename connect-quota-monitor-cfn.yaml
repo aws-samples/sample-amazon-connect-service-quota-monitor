@@ -1,5 +1,5 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: 'Enhanced Amazon Connect Service Quota Monitor - Comprehensive monitoring of 112 Connect quotas with intelligent deployment and consolidated alerting'
+Description: 'Enhanced Amazon Connect Service Quota Monitor - Comprehensive monitoring of dynamically discovered Connect service-family quotas with intelligent deployment and consolidated alerting'
 
 Metadata:
   # W1030: SubnetIds is referenced only inside the UseVPC branch of the Lambda
@@ -22,6 +22,7 @@ Metadata:
           default: "Lambda Configuration"
         Parameters:
           - LambdaTimeout
+          - LambdaMaxRetryAttempts
           - LambdaMemory
           - LambdaRuntime
           - DeploymentMethod
@@ -52,6 +53,8 @@ Metadata:
         default: "Notification Email Address"
       LambdaTimeout:
         default: "Lambda Timeout (seconds)"
+      LambdaMaxRetryAttempts:
+        default: "Lambda Async Retry Attempts"
       LambdaMemory:
         default: "Lambda Memory (MB)"
       LambdaRuntime:
@@ -75,6 +78,14 @@ Parameters:
     MinValue: 60
     MaxValue: 900
     ConstraintDescription: Must be between 60 and 900 seconds
+    
+  LambdaMaxRetryAttempts:
+    Type: Number
+    Default: 2
+    Description: Async invocation retry attempts for a failed/timed-out monitor run (0-2). The next scheduled run is also a natural retry; lower toward 0 if retries cause Service Quotas throttling. Failures still land in the DLQ.
+    MinValue: 0
+    MaxValue: 2
+    ConstraintDescription: Must be between 0 and 2 (AWS async invocation limit)
     
   LambdaMemory:
     Type: Number
@@ -734,6 +745,15 @@ Resources:
         - Key: Purpose
           Value: ConnectQuotaMonitorDLQ
 
+  # Async retry config for failed/timed-out invocations (parity with Terraform's
+  # lambda_max_retry_attempts). Failures still land in the DLQ.
+  QuotaMonitorLambdaInvokeConfig:
+    Type: AWS::Lambda::EventInvokeConfig
+    Properties:
+      FunctionName: !Ref QuotaMonitorLambda
+      Qualifier: "$LATEST"
+      MaximumRetryAttempts: !Ref LambdaMaxRetryAttempts
+
   # Enhanced Lambda Function with intelligent deployment support
   QuotaMonitorLambda:
     Type: AWS::Lambda::Function
@@ -852,7 +872,7 @@ Resources:
 
 Outputs:
   LambdaFunction:
-    Description: "Enhanced Lambda function that monitors 112 Connect quotas"
+    Description: "Enhanced Lambda function that monitors dynamically discovered Connect service-family quotas"
     Value: !Ref QuotaMonitorLambda
     Export:
       Name: !Sub "${AWS::StackName}-LambdaFunction"
@@ -905,7 +925,7 @@ Outputs:
     
   MonitoringCapabilities:
     Description: "Enhanced monitoring capabilities"
-    Value: "112 Connect quotas, Dynamic instance discovery, Consolidated alerting, Multi-service support, Flexible storage, Python 3.12 runtime"
+    Value: "Dynamic Connect-family quota discovery, Dynamic instance discovery, Consolidated alerting, Multi-service support, Flexible storage, Python 3.12 runtime"
     
   DeploymentInstructions:
     Description: "Next steps for completing the deployment"

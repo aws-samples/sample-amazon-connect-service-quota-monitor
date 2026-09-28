@@ -31,6 +31,16 @@ Parameters:
     Description: S3 bucket for dashboard reports, archives, and peak files
     Default: ''
 
+  MonitorReportBucket:
+    Type: String
+    Description: >
+      S3 bucket of the core quota-monitor's consolidated report
+      (connect-reports/latest/latest-report.json). When set, the dashboard's
+      Quotas tab is built from the monitor's hourly findings instead of an
+      independent scan. Leave empty to fall back to the resource-mapper's own
+      quota model.
+    Default: ''
+
   ScheduleRate:
     Type: String
     Description: How frequently the metrics Lambda runs (e.g., rate(1 hour), rate(15 minutes))
@@ -69,6 +79,8 @@ Resources:
           LINE_CONFIG_S3_BUCKET: !Ref LineConfigS3Bucket
           LINE_CONFIG_S3_KEY: !Ref LineConfigS3Key
           S3_REPORT_BUCKET: !Ref ReportBucket
+          MONITOR_REPORT_BUCKET: !Ref MonitorReportBucket
+          MONITOR_REPORT_KEY: 'connect-reports/latest/latest-report.json'
           API_ENDPOINT: !Ref HistoryApiUrl
       Policies:
         - Version: '2012-10-17'
@@ -108,6 +120,15 @@ Resources:
                 Action:
                   - s3:ListBucket
                 Resource: !Sub 'arn:aws:s3:::${ReportBucket}'
+              - !Ref AWS::NoValue
+            - !If
+              - HasMonitorReportBucket
+              # Read the core monitor's consolidated report so the dashboard's
+              # Quotas tab reflects the hourly scan (single source of truth).
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                Resource: !Sub 'arn:aws:s3:::${MonitorReportBucket}/connect-reports/*'
               - !Ref AWS::NoValue
       Events:
         # Path is /quota to match the handler's documented contract
@@ -150,6 +171,7 @@ Resources:
 Conditions:
   HasS3Config: !Not [!Equals [!Ref LineConfigS3Bucket, '']]
   HasReportBucket: !Not [!Equals [!Ref ReportBucket, '']]
+  HasMonitorReportBucket: !Not [!Equals [!Ref MonitorReportBucket, '']]
 
 Outputs:
   DashboardURL:

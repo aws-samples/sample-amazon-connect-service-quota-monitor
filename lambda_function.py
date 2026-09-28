@@ -5,13 +5,14 @@
 """
 Amazon Connect Service Quota Monitor - Enhanced Edition
 
-This comprehensive Lambda function monitors 112 Amazon Connect service quotas across all Connect services
-with dynamic instance discovery, consolidated alerting, and intelligent deployment capabilities.
+This comprehensive Lambda function monitors Amazon Connect service quotas dynamically
+discovered from Service Quotas across the Connect service family, with dynamic instance
+discovery, consolidated alerting, and intelligent deployment capabilities.
 
 Key Features:
-- Monitors 112 quotas across 8 service categories (Core Connect, Contact Handling,
-  Routing and Queues, Reporting, Forecasting and Capacity, Integrations,
-  API Rate Limits, Contact Lens)
+- Dynamically discovers and monitors every quota in the Amazon Connect service family
+  from Service Quotas (~450+), refreshed weekly and cached in S3; the maintained
+  definitions are merged on top so existing per-instance measurement is preserved
 - Dynamic instance discovery (no hardcoded instance IDs)
 - Consolidated alerts (one email per instance with all violations)
 - Flexible storage (S3, DynamoDB, or both)
@@ -199,6 +200,60 @@ if not is_valid:
 # of allowed category labels (QUOTA_CATEGORIES declares more than are in use).
 _active_categories = {q.get("category") for q in ENHANCED_CONNECT_QUOTA_METRICS.values() if q.get("category")}
 logger.info(f"Enhanced Connect Quota Monitor initialized with {len(ENHANCED_CONNECT_QUOTA_METRICS)} quota definitions across {len(_active_categories)} categories")
+
+# ---------------------------------------------------------------------------
+# Dynamic quota catalog (Layer 1)
+# Discovers the Connect-family quota codes from Service Quotas at runtime and
+# resolves how to measure usage for each, from the UsageMetric AWS ships. No
+# hardcoded service/quota codes and no human-supplied measurement recipes:
+# usage is auto-resolvable only where a UsageMetric exists; everything else is
+# flagged UNKNOWN_NEEDS_DEFINITION and reported allocation-only.
+# ---------------------------------------------------------------------------
+CATALOG_S3_KEY = os.environ.get('QUOTA_CATALOG_S3_KEY', 'quota-catalog/catalog.json')
+try:
+    CATALOG_TTL_DAYS = int(os.environ.get('QUOTA_CATALOG_TTL_DAYS', '7'))
+except (TypeError, ValueError):
+    CATALOG_TTL_DAYS = 7
+# Machine encoding of the "Connect family" scope. A Service Quotas ServiceName
+# is kept if it contains any token. "connect" catches Connect core, Cases,
+# Customer Profiles, Q in Connect, Outbound Campaigns and Voice ID;
+# "appintegration" catches AppIntegrations (whose name has no "Connect").
+CATALOG_SERVICE_NAME_TOKENS = ['connect', 'appintegration']
+
+
+def _service_in_connect_family(service_name):
+    name = (service_name or '').lower()
+    return any(tok in name for tok in CATALOG_SERVICE_NAME_TOKENS)
+
+
+def resolve_measurement(sq_quota):
+    """Resolve how to measure usage for a discovered Service Quotas quota.
+
+    Zero-human: relies only on the UsageMetric AWS ships in the quota record.
+      - rate quota (AWS/Usage CallCount, name 'Rate of', or a per-second unit)
+        -> cloudwatch_api  (the existing method performs the /60 TPS conversion)
+      - other quota carrying a UsageMetric -> service_quotas (existing generic read)
+      - no UsageMetric -> UNKNOWN_NEEDS_DEFINITION (allocation-only, flagged)
+    Returns (method, status, extra) where extra carries method-specific fields
+    (e.g. 'operation' for cloudwatch_api).
+    """
+    name = sq_quota.get('QuotaName', '') or ''
+    unit = (sq_quota.get('Unit', '') or '').lower()
+    um = sq_quota.get('UsageMetric') or {}
+    if um and um.get('MetricName'):
+        is_rate = (
+            (um.get('MetricNamespace') == 'AWS/Usage' and um.get('MetricName') == 'CallCount')
+            or name.startswith('Rate of ')
+            or 'second' in unit
+        )
+        if is_rate:
+            operation = (um.get('MetricDimensions') or {}).get('Resource')
+            if not operation:
+                operation = name.replace('Rate of ', '').replace(' API requests', '').strip()
+            return 'cloudwatch_api', 'AUTO_RATE', {'operation': operation}
+        return 'service_quotas', 'AUTO_USAGEMETRIC', {}
+    return 'none', 'UNKNOWN_NEEDS_DEFINITION', {}
+
 
 class MultiServiceClientManager:
     """
@@ -1014,7 +1069,10 @@ class ConnectQuotaMonitor:
         
         # Monitor account-level quotas once
         logger.info("Monitoring account-level quotas...")
-        account_quotas = get_account_level_quotas()
+        # Layer 1: the dynamic catalog is the source of quota codes (not a
+        # hardcoded list). Scope is derived per quota from Service Quotas.
+        catalog = self.load_or_refresh_catalog()
+        account_quotas = {c: q for c, q in catalog.items() if q.get('scope', 'ACCOUNT') == 'ACCOUNT'}
         account_results = []
         
         for quota_code, quota_config in account_quotas.items():
@@ -1023,10 +1081,11 @@ class ConnectQuotaMonitor:
                 if result:
                     account_results.append(result)
                     monitoring_results['total_quotas_checked'] += 1
-                    
-                    if result['utilization_percentage'] >= threshold_percentage:
+
+                    _util = result.get('utilization_percentage')
+                    if _util is not None and _util >= threshold_percentage:
                         monitoring_results['violations_found'] += 1
-                        logger.warning(f"Account quota violation: {result['quota_name']} at {result['utilization_percentage']}%")
+                        logger.warning(f"Account quota violation: {result['quota_name']} at {_util}%")
                         
             except Exception as e:
                 error_msg = f"Error monitoring account quota {quota_code}: {sanitize_log(str(e))}"
@@ -1037,7 +1096,7 @@ class ConnectQuotaMonitor:
         monitoring_results['account_results'] = account_results
         
         # Monitor instance-level quotas for each instance
-        instance_quotas = get_instance_level_quotas()
+        instance_quotas = {c: q for c, q in catalog.items() if q.get('scope') == 'INSTANCE'}
 
         for instance in instances:
             instance_id = instance['Id']
@@ -1071,11 +1130,12 @@ class ConnectQuotaMonitor:
                     if result:
                         instance_results.append(result)
                         monitoring_results['total_quotas_checked'] += 1
-                        
-                        if result['utilization_percentage'] >= threshold_percentage:
+
+                        _util = result.get('utilization_percentage')
+                        if _util is not None and _util >= threshold_percentage:
                             instance_violations += 1
                             monitoring_results['violations_found'] += 1
-                            logger.warning(f"Instance quota violation: {result['quota_name']} at {result['utilization_percentage']}% for {instance_alias}")
+                            logger.warning(f"Instance quota violation: {result['quota_name']} at {_util}% for {instance_alias}")
                             
                 except Exception as e:
                     error_msg = f"Error monitoring quota {quota_code} for instance {instance_id}: {sanitize_log(str(e))}"
@@ -1544,49 +1604,59 @@ class ConnectQuotaMonitor:
             current_usage, quota_limit = self._monitor_via_service_quotas(instance_id, metric_config, quota_code)
             
         else:
-            logger.warning(f"Unknown monitoring method '{method}' for quota {quota_name}")
-            return None
-        
-        # Handle monitoring failures
+            # No usage method (measurement_status UNKNOWN_NEEDS_DEFINITION) or an
+            # unrecognized method: do NOT drop the quota. Report it limit-only so
+            # its allocation still surfaces and it is visible as needing a
+            # measurement definition.
+            if method not in (None, 'none'):
+                logger.warning(f"Unknown monitoring method '{method}' for quota {quota_name}; reporting limit-only")
+            current_usage = None
+
+        # drop -> flag: always emit a row (never dropped). Usage-unavailable
+        # becomes a flagged LIMIT_ONLY row with the allocation preserved;
+        # utilization is never coerced to a false 0% that could mask a breach.
+        alloc_status = 'OK'
         if current_usage is None:
-            logger.warning(f"Failed to get usage for quota {quota_name}")
-            return None
-        
-        # Calculate utilization percentage
-        if quota_limit > 0:
-            utilization_percentage = (current_usage / quota_limit) * 100
-        elif current_usage > 0:
-            # We have real usage but no usable limit (limit is 0/unknown -- e.g.
-            # a quota not registered with Service Quotas, or an AccessDenied on
-            # the applied-limit lookup). Forcing 0% here would report a resource
-            # that is actively in use as "healthy", masking a possible breach.
-            # Report it as unavailable instead, consistent with how pagination
-            # and multi-count paths return None rather than a false-low value.
-            logger.warning(
-                f"Quota {quota_name} has usage {current_usage} but no usable limit "
-                f"({quota_limit}); reporting utilization as unavailable rather than 0%"
-            )
-            return None
+            usage_status = 'LIMIT_ONLY'
+            utilization_percentage = None
+            if quota_limit is None or quota_limit <= 0:
+                alloc_status = 'ALLOCATION_UNAVAILABLE'
+        elif quota_limit is not None and quota_limit > 0:
+            usage_status = 'MEASURED'
+            utilization_percentage = round((current_usage / quota_limit) * 100, 2)
+        elif current_usage == 0:
+            # Nothing consumed against a 0/unknown limit (e.g. a disabled-feature
+            # quota with an applied limit of 0): report 0% healthy, not a false alert.
+            usage_status = 'MEASURED'
+            utilization_percentage = 0.0
         else:
-            utilization_percentage = 0
+            # Real usage but no usable (>0) limit: cannot compute utilization.
+            # Flag it unavailable rather than a false 0% (anti-false-negative).
+            usage_status = 'MEASURED'
+            utilization_percentage = None
+            alloc_status = 'ALLOCATION_UNAVAILABLE'
         
-        # Create result with all three values
+        # Create result with all values (always emitted; drop -> flag)
         result = {
             'quota_code': quota_code or 'unknown',
             'quota_name': quota_name,
             'category': metric_config.get('category', 'UNKNOWN'),
             'scope': scope,
             'default_limit': default_limit,  # Original default from AWS docs
-            'current_usage': current_usage,  # Actual current utilization
-            'quota_limit': quota_limit,  # Applied quota (may differ from default)
-            'utilization_percentage': round(utilization_percentage, 2),
+            'current_usage': current_usage,  # Actual current utilization (None if unavailable)
+            'quota_limit': quota_limit,  # Applied quota (Service Quotas Value)
+            'utilization_percentage': utilization_percentage,  # None when usage/limit unavailable (never 0-as-fill)
+            'usage_status': usage_status,  # MEASURED | LIMIT_ONLY
+            'alloc_status': alloc_status,  # OK | ALLOCATION_UNAVAILABLE
+            'measurement_status': metric_config.get('measurement_status', 'UNSPECIFIED'),
             'instance_id': instance_id,
             'timestamp': datetime.now(timezone.utc).isoformat(),
             'method': method,
             'service': service
         }
-        
-        logger.debug(f"Quota monitoring result: {quota_name} = {current_usage}/{quota_limit} (default: {default_limit}, {utilization_percentage:.1f}%)")
+
+        _util_disp = f"{utilization_percentage:.1f}%" if utilization_percentage is not None else "n/a"
+        logger.debug(f"Quota monitoring result: {quota_name} = {current_usage}/{quota_limit} (default: {default_limit}, {_util_disp})")
         return result
     
     def _monitor_via_api_count(self, instance_id, metric_config):
@@ -1885,6 +1955,164 @@ class ConnectQuotaMonitor:
         usage_metric = quota_info.get('UsageMetric')
         current_usage = self._query_usage_from_usage_metric(usage_metric) if usage_metric else None
         return current_usage, quota_limit
+
+    def discover_service_codes(self):
+        """Discover Connect-family Service Quotas service codes at runtime.
+
+        Calls ListServices and keeps codes whose ServiceName matches the
+        Connect family. No hardcoded codes; the kept/skipped sets are logged so
+        the scope is observable rather than assumed.
+        """
+        kept, skipped = [], []
+        next_token = None
+        pages = 0
+        while pages < 50:
+            params = {'MaxResults': 100}
+            if next_token:
+                params['NextToken'] = next_token
+            resp = self.call_service_api('service-quotas', 'list_services', **params)
+            if not resp:
+                break
+            for svc in resp.get('Services', []):
+                code = svc.get('ServiceCode')
+                name = svc.get('ServiceName')
+                if not code:
+                    continue
+                if _service_in_connect_family(name):
+                    kept.append((code, name))
+                else:
+                    skipped.append(name)
+            next_token = resp.get('NextToken')
+            pages += 1
+            if not next_token:
+                break
+        logger.info(
+            f"Catalog scope: kept {len(kept)} Connect-family service(s): "
+            f"{sorted(c for c, _ in kept)}"
+        )
+        logger.debug(f"Catalog scope: skipped {len(skipped)} non-Connect service(s)")
+        return kept
+
+    def build_quota_catalog(self):
+        """Layer 1: discover every Connect-family quota and resolve how to
+        measure usage for each. Returns {quota_code: entry}. Entries are shaped
+        like the existing quota_config dicts so the unchanged _monitor_via_*
+        methods consume them directly."""
+        catalog = {}
+        status_counts = {}
+        for service_code, _service_name in self.discover_service_codes():
+            quota_map = self._get_service_quota_map(service_code)
+            for qcode, q in quota_map.items():
+                method, status, extra = resolve_measurement(q)
+                # Scope is data-driven: ContextScope=RESOURCE means the quota
+                # applies per resource, so scan it per discovered instance;
+                # ACCOUNT (or absent) is checked once. This extends resource-level
+                # scanning to the WHOLE discovered set, not just the overlay.
+                ctx_scope = (q.get('QuotaContext') or {}).get('ContextScope')
+                scope = 'INSTANCE' if ctx_scope == 'RESOURCE' else 'ACCOUNT'
+                entry = {
+                    'name': q.get('QuotaName', qcode),
+                    'category': 'DISCOVERED',
+                    'scope': scope,
+                    'service': service_code,
+                    # For a RESOURCE-scope quota, list_service_quotas' Value is the
+                    # value applied to each resource, i.e. the per-instance default
+                    # limit; accurate per-instance overrides (ContextId) are deferred.
+                    'default_limit': float(q.get('Value', 0) or 0),
+                    'context_required': False,
+                    'unit': q.get('Unit', ''),
+                    'adjustable': q.get('Adjustable'),
+                    'method': method,
+                    'measurement_status': status,
+                }
+                entry.update(extra)  # e.g. 'operation' for cloudwatch_api
+                catalog[qcode] = entry
+                status_counts[status] = status_counts.get(status, 0) + 1
+        discovered_count = len(catalog)
+
+        # Preserve every previously-working definition: merge the maintained
+        # static definitions ON TOP of discovery so their scope (INSTANCE vs
+        # ACCOUNT) and measurement recipes (api_count / cloudwatch, including
+        # per-instance resource counts measured against each discovered
+        # instance) win over any discovered stub for the same code. The catalog
+        # is therefore a strict SUPERSET: discovery only ADDS codes, it never
+        # removes or downgrades a previously-working one.
+        for qcode, static_entry in ENHANCED_CONNECT_QUOTA_METRICS.items():
+            merged = dict(static_entry)
+            merged.setdefault('measurement_status', 'OVERLAY')
+            catalog[qcode] = merged
+
+        # Recount statuses over the final (merged) catalog.
+        status_counts = {}
+        for e in catalog.values():
+            s = e.get('measurement_status', 'UNSPECIFIED')
+            status_counts[s] = status_counts.get(s, 0) + 1
+        logger.info(
+            f"Quota catalog built: {len(catalog)} codes "
+            f"({discovered_count} discovered + {len(ENHANCED_CONNECT_QUOTA_METRICS)} overlay); "
+            f"resolution {status_counts}"
+        )
+        needs_def = [c for c, e in catalog.items()
+                     if e.get('measurement_status') == 'UNKNOWN_NEEDS_DEFINITION']
+        if needs_def:
+            logger.info(
+                f"{len(needs_def)} code(s) NEEDS_DEFINITION (allocation-only): "
+                f"{sorted(needs_def)[:25]}"
+            )
+        return catalog
+
+    def _catalog_from_s3(self):
+        if not getattr(self, 's3_client', None) or not self.s3_bucket:
+            return None
+        try:
+            obj = self.s3_client.get_object(Bucket=self.s3_bucket, Key=CATALOG_S3_KEY)
+            return json.loads(obj['Body'].read())
+        except Exception as e:
+            logger.info(f"No cached quota catalog available: {sanitize_log(str(e))}")
+            return None
+
+    def _catalog_to_s3(self, catalog):
+        if not getattr(self, 's3_client', None) or not self.s3_bucket:
+            logger.warning("No S3 bucket configured for catalog cache; catalog will rebuild every run")
+            return
+        try:
+            self.s3_client.put_object(
+                Bucket=self.s3_bucket,
+                Key=CATALOG_S3_KEY,
+                Body=json.dumps(
+                    {'builtAt': datetime.now(timezone.utc).isoformat(), 'catalog': catalog},
+                    default=str,
+                ),
+                ContentType='application/json',
+            )
+            logger.info(
+                f"Wrote quota catalog to s3://{sanitize_log(self.s3_bucket)}/{CATALOG_S3_KEY} "
+                f"({len(catalog)} codes)"
+            )
+        except Exception as e:
+            logger.error(f"Failed to write quota catalog to S3: {sanitize_log(str(e))}")
+
+    def load_or_refresh_catalog(self):
+        """Return the quota catalog, rebuilding it only when the cached copy is
+        older than CATALOG_TTL_DAYS (default 7) or missing. Weekly refresh; the
+        hourly scan reuses the cache."""
+        cached = self._catalog_from_s3()
+        if cached and cached.get('catalog'):
+            try:
+                built = datetime.fromisoformat(cached['builtAt'])
+                age_days = (datetime.now(timezone.utc) - built).days
+                if age_days < CATALOG_TTL_DAYS:
+                    logger.info(
+                        f"Using cached quota catalog: {len(cached['catalog'])} codes, "
+                        f"built {cached['builtAt']} ({age_days}d old)"
+                    )
+                    return cached['catalog']
+                logger.info(f"Quota catalog is {age_days}d old (>= {CATALOG_TTL_DAYS}d) -- rebuilding")
+            except Exception as e:
+                logger.warning(f"Could not read catalog age; rebuilding: {sanitize_log(str(e))}")
+        catalog = self.build_quota_catalog()
+        self._catalog_to_s3(catalog)
+        return catalog
 
     def _get_service_quota_map(self, service_code):
         """Return {QuotaCode: quota-dict} for a service, fetched once via
@@ -2450,7 +2678,7 @@ class FlexibleStorageEngine:
             'date': timestamp.strftime('%Y-%m-%d'),
             'execution_id': str(uuid.uuid4()),
             'metrics_count': len(metrics_data),
-            'violations_count': len([m for m in metrics_data if m.get('utilization_percentage', 0) >= THRESHOLD_PERCENTAGE]),
+            'violations_count': len([m for m in metrics_data if (m.get('utilization_percentage') or 0) >= THRESHOLD_PERCENTAGE]),
             'metrics': metrics_data,
             'summary': self._create_metrics_summary(metrics_data)
         }
@@ -2465,7 +2693,7 @@ class FlexibleStorageEngine:
             'date': timestamp.strftime('%Y-%m-%d'),
             'execution_id': str(uuid.uuid4()),
             'metrics_count': len(metrics_data),
-            'violations_count': len([m for m in metrics_data if m.get('utilization_percentage', 0) >= THRESHOLD_PERCENTAGE]),
+            'violations_count': len([m for m in metrics_data if (m.get('utilization_percentage') or 0) >= THRESHOLD_PERCENTAGE]),
             'metrics': metrics_data,
             'summary': self._create_metrics_summary(metrics_data)
         }
@@ -2503,7 +2731,7 @@ class FlexibleStorageEngine:
         if not metrics_data:
             return {}
         
-        utilizations = [m.get('utilization_percentage', 0) for m in metrics_data]
+        utilizations = [m.get('utilization_percentage') for m in metrics_data if m.get('utilization_percentage') is not None]
         categories = {}
         
         for metric in metrics_data:
@@ -2511,7 +2739,7 @@ class FlexibleStorageEngine:
             if category not in categories:
                 categories[category] = {'count': 0, 'violations': 0}
             categories[category]['count'] += 1
-            if metric.get('utilization_percentage', 0) >= THRESHOLD_PERCENTAGE:
+            if (metric.get('utilization_percentage') or 0) >= THRESHOLD_PERCENTAGE:
                 categories[category]['violations'] += 1
         
         return {
@@ -2910,7 +3138,8 @@ class AlertConsolidationEngine:
         violations = []
         
         for result in monitoring_results.get('account_results', []):
-            if result.get('utilization_percentage', 0) >= self.threshold_percentage:
+            _u = result.get('utilization_percentage')
+            if _u is not None and _u >= self.threshold_percentage:
                 violations.append(result)
         
         return violations
@@ -2920,7 +3149,8 @@ class AlertConsolidationEngine:
         violations = []
         
         for result in instance_data.get('results', []):
-            if result.get('utilization_percentage', 0) >= self.threshold_percentage:
+            _u = result.get('utilization_percentage')
+            if _u is not None and _u >= self.threshold_percentage:
                 violations.append(result)
         
         return violations
@@ -3113,17 +3343,28 @@ class AlertConsolidationEngine:
                 ])
                 
                 for quota in category_quotas:
-                    utilization = quota.get('utilization_percentage', 0)
-                    # Use >= to match the violation-detection threshold, so a quota
-                    # at exactly the threshold isn't flagged as a violation yet shown
-                    # with a ✅ in the same alert.
-                    status_icon = "⚠️ " if utilization >= self.threshold_percentage else "✅"
-                    
+                    utilization = quota.get('utilization_percentage')
+                    cu = quota.get('current_usage')
+                    ql = quota.get('quota_limit')
+                    usage_disp = f"{cu:,}" if isinstance(cu, (int, float)) else "n/a"
+                    limit_disp = f"{ql:,}" if isinstance(ql, (int, float)) else "n/a"
+                    # Null utilization = limit-only (usage not published by AWS):
+                    # render neutrally so it is never shown as ✅ healthy or ⚠️ breached.
+                    if utilization is None:
+                        status_icon = "◇"
+                        util_disp = "n/a"
+                    else:
+                        # Use >= to match the violation-detection threshold, so a quota
+                        # at exactly the threshold isn't flagged as a violation yet shown
+                        # with a ✅ in the same alert.
+                        status_icon = "⚠️ " if utilization >= self.threshold_percentage else "✅"
+                        util_disp = f"{utilization:.1f}%"
+
                     message_lines.extend([
                         f"{status_icon} {quota['quota_name']}",
-                        f"  Current Usage: {quota['current_usage']:,}",
-                        f"  Quota Limit: {quota['quota_limit']:,}",
-                        f"  Utilization: {utilization:.1f}%",
+                        f"  Current Usage: {usage_disp}",
+                        f"  Quota Limit: {limit_disp}",
+                        f"  Utilization: {util_disp}",
                         ""
                     ])
 
@@ -3432,7 +3673,7 @@ def main(event=None, context=None):
                     'alerts_sent': results.get('alert_results', {}).get('alerts_sent', 0),
                     'storage_backends': results.get('storage_status', {}).get('storage_backends', []),
                     'enhanced_features': [
-                        '112 quota monitoring',
+                        'Dynamic quota discovery (Connect service family)',
                         'Dynamic instance discovery',
                         'Consolidated alerting',
                         'Flexible storage',

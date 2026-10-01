@@ -2234,22 +2234,30 @@ class ConnectQuotaMonitor:
     def _get_actual_quota_limit(self, service, quota_code, instance_id=None, context_required=False):
         """Return the applied quota limit for a code, or None if not published.
 
-        Reads from the per-service applied-quota map (one ListServiceQuotas call
-        per service) so we use the customer's approved value rather than the
-        documented default. Connect quotas are account/Region scoped in Service
-        Quotas, so no per-instance ContextId lookup is made.
-
-        instance_id/context_required are accepted for call-site compatibility but
-        not used: every current quota is account/Region scoped. If a genuinely
-        resource-scoped quota is ever added (context_required=True), warn loudly
-        rather than silently return the account-level value.
+        For a quota resolved in an instance context (instance_id set) on the
+        'connect' service, read the PER-INSTANCE applied value via GetServiceQuota
+        with a ContextId -- resource-scoped Connect quotas (Users, Queues, Routing
+        profiles, etc.) carry a per-instance override that ListServiceQuotas does
+        not return. Fall back to the account-level ListServiceQuotas map for
+        account-scoped quotas, or when no resource-level override is readable, so
+        we still use the customer's approved value rather than the documented
+        default. context_required is accepted for call-site compatibility.
         """
-        if context_required:
-            logger.warning(
-                f"Quota {quota_code} is marked context_required, but resource-scoped "
-                f"(ContextId) lookups are not implemented; returning the account/Region "
-                f"applied limit, which may be wrong for instance {instance_id}"
+        # Resource-scoped Connect quotas carry a PER-INSTANCE applied override
+        # that only GetServiceQuota with a ContextId returns; ListServiceQuotas
+        # (the account map below) returns the account-level default, which
+        # understates the real limit and causes false violations. When resolving
+        # a quota in an instance context, read the resource-level value first.
+        if instance_id and service == 'connect':
+            arn = f"arn:aws:connect:{self.region}:{self._get_account_id()}:instance/{instance_id}"
+            resp = self.call_service_api(
+                'service-quotas', 'get_service_quota',
+                ServiceCode=service, QuotaCode=quota_code, ContextId=arn
             )
+            rq = (resp or {}).get('Quota')
+            if rq and rq.get('Value') is not None:
+                return float(rq['Value'])
+            # No readable resource-level override -> fall through to account level.
         quota = self._get_service_quota_map(service).get(quota_code)
         if quota and quota.get('Value') is not None:
             return float(quota['Value'])

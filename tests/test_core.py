@@ -316,8 +316,9 @@ class TestCloudWatchMonitoring:
 
 
 class TestAppliedQuotaLookup:
-    """Regression: applied limits come from a single batched ListServiceQuotas
-    per service (cached), never a per-quota GetServiceQuota call."""
+    """Applied limits: for an instance-scoped Connect quota the per-instance
+    override is read first via GetServiceQuota(ContextId); absent an override the
+    value comes from the batched, cached ListServiceQuotas map."""
 
     def _make_monitor(self):
         from lambda_function import ConnectQuotaMonitor
@@ -326,11 +327,18 @@ class TestAppliedQuotaLookup:
         return m
 
     def test_applied_limit_from_list_service_quotas(self):
+        # Instance-scoped connect quota: _get_actual_quota_limit first probes the
+        # per-instance applied override via GetServiceQuota(ContextId); when none
+        # is published it falls back to the batched, cached ListServiceQuotas map.
+        # This asserts that fallback value and that the map is cached.
         monitor = self._make_monitor()
+        monitor._get_account_id = lambda: "123456789012"
         calls = []
 
         def fake_call(service, api, **kwargs):
             calls.append((service, api))
+            if api == "get_service_quota":
+                return {}  # no per-instance override -> fall through to the map
             if api == "list_service_quotas":
                 return {"Quotas": [{"QuotaCode": "L-D945C9A8", "Value": 75.0}]}
             raise AssertionError(f"unexpected call {service}.{api}")
@@ -338,12 +346,12 @@ class TestAppliedQuotaLookup:
         monitor.call_service_api = fake_call
         val = monitor._get_actual_quota_limit("connect", "L-D945C9A8", instance_id="inst-1")
         assert val == 75.0, f"expected applied value 75 from the batch map, got {val}"
-        assert all(api == "list_service_quotas" for _, api in calls), \
-            "must not call get_service_quota per quota"
-        # Second lookup must be served from cache (no new list_service_quotas call).
-        before = len(calls)
+        # The batched map must be cached: a second lookup makes no new
+        # list_service_quotas call (the per-instance probe may run again).
+        before = [a for _, a in calls].count("list_service_quotas")
         monitor._get_actual_quota_limit("connect", "L-D945C9A8", instance_id="inst-1")
-        assert len(calls) == before, "second lookup should hit the cached map"
+        after = [a for _, a in calls].count("list_service_quotas")
+        assert after == before, "second lookup should hit the cached map"
 
     def test_no_context_required_quotas_remaining(self):
         """All quota definitions now omit resource-level context (design decision:

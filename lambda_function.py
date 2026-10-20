@@ -1618,7 +1618,7 @@ class ConnectQuotaMonitor:
         # Method 5: Get quota usage from Service Quotas API
         elif method == 'service_quotas':
             current_usage, quota_limit = self._monitor_via_service_quotas(instance_id, metric_config, quota_code)
-            limit_verified = quota_limit is not None and quota_limit > 0  # Fix B
+            limit_verified = quota_limit is not None  # Fix B: a value READ from Service Quotas (incl 0) is verified
             
         else:
             # No usage method (measurement_status UNKNOWN_NEEDS_DEFINITION) or an

@@ -247,10 +247,19 @@ def resolve_measurement(sq_quota):
             or 'second' in unit
         )
         if is_rate:
-            operation = (um.get('MetricDimensions') or {}).get('Resource')
+            dims = dict(um.get('MetricDimensions') or {})
+            operation = dims.get('Resource')
             if not operation:
                 operation = name.replace('Rate of ', '').replace(' API requests', '').strip()
-            return 'cloudwatch_api', 'AUTO_RATE', {'operation': operation}
+            extra = {'operation': operation}
+            # Fix C: carry the EXACT AWS/Usage dimensions AWS publishes for this
+            # quota (Service/Type/Resource/Class) so usage is read against the
+            # right Service. Operations like ListTagsForResource exist under
+            # connect, connectcases and app-integrations; a hardcoded
+            # Service=Connect read the wrong service's usage for the others.
+            if dims:
+                extra['usage_dimensions'] = dims
+            return 'cloudwatch_api', 'AUTO_RATE', extra
         return 'service_quotas', 'AUTO_USAGEMETRIC', {}
     return 'none', 'UNKNOWN_NEEDS_DEFINITION', {}
 
@@ -1572,6 +1581,12 @@ class ConnectQuotaMonitor:
         
         current_usage = 0
         quota_limit = default_limit  # Start with default, may be updated
+        # Fix B: becomes True only when we read an APPLIED limit from Service
+        # Quotas (account map or per-instance ContextId override), or the
+        # service_quotas method returns one. While False, quota_limit is just a
+        # hardcoded documented default we could NOT confirm -- computing a % off
+        # it is what produced the false positives, so we will not.
+        limit_verified = False
         
         # Method 1: Count resources via API pagination
         if method == 'api_count':
@@ -1597,11 +1612,13 @@ class ConnectQuotaMonitor:
                 actual_quota = self._get_actual_quota_limit(service, quota_code, instance_id, context_required)
                 if actual_quota is not None and actual_quota > 0:
                     quota_limit = actual_quota
+                    limit_verified = True  # Fix B: confirmed applied limit
                     logger.debug(f"Using actual quota limit {quota_limit} for {quota_name} (default: {default_limit})")
             
         # Method 5: Get quota usage from Service Quotas API
         elif method == 'service_quotas':
             current_usage, quota_limit = self._monitor_via_service_quotas(instance_id, metric_config, quota_code)
+            limit_verified = quota_limit is not None  # Fix B: a value READ from Service Quotas (incl 0) is verified
             
         else:
             # No usage method (measurement_status UNKNOWN_NEEDS_DEFINITION) or an
@@ -1621,6 +1638,17 @@ class ConnectQuotaMonitor:
             utilization_percentage = None
             if quota_limit is None or quota_limit <= 0:
                 alloc_status = 'ALLOCATION_UNAVAILABLE'
+        elif not limit_verified:
+            # Fix B: usage was measured, but the limit is an unconfirmed
+            # hardcoded default (not readable from Service Quotas, e.g. a rate
+            # overlay whose operation AWS does not expose as a quota). The
+            # default can be far below the customer's real approved limit, so a
+            # % here is exactly the false positive this monitor produced. Emit
+            # the row with usage preserved but util=None, so every violation and
+            # alert site (all key off utilization_percentage) excludes it, while
+            # it still surfaces as needing limit verification.
+            usage_status = 'UNVERIFIED_LIMIT'
+            utilization_percentage = None
         elif quota_limit is not None and quota_limit > 0:
             usage_status = 'MEASURED'
             utilization_percentage = round((current_usage / quota_limit) * 100, 2)
@@ -1646,8 +1674,10 @@ class ConnectQuotaMonitor:
             'current_usage': current_usage,  # Actual current utilization (None if unavailable)
             'quota_limit': quota_limit,  # Applied quota (Service Quotas Value)
             'utilization_percentage': utilization_percentage,  # None when usage/limit unavailable (never 0-as-fill)
-            'usage_status': usage_status,  # MEASURED | LIMIT_ONLY
+            'usage_status': usage_status,  # MEASURED | LIMIT_ONLY | UNVERIFIED_LIMIT
             'alloc_status': alloc_status,  # OK | ALLOCATION_UNAVAILABLE
+            'limit_verified': limit_verified,  # Fix B: applied limit confirmed via Service Quotas
+            'unverified_limit': (not limit_verified),  # convenience inverse for reporting
             'measurement_status': metric_config.get('measurement_status', 'UNSPECIFIED'),
             'instance_id': instance_id,
             'timestamp': datetime.now(timezone.utc).isoformat(),
@@ -1884,12 +1914,25 @@ class ConnectQuotaMonitor:
 
         # API usage lives in AWS/Usage, not AWS/Connect. The namespace field in
         # the quota definition is not used for this method.
-        dimensions = [
-            {'Name': 'Service', 'Value': 'Connect'},
-            {'Name': 'Class', 'Value': 'None'},
-            {'Name': 'Type', 'Value': 'API'},
-            {'Name': 'Resource', 'Value': operation},
-        ]
+        #
+        # Fix C: prefer the exact AWS/Usage dimensions AWS published for this
+        # quota (captured by resolve_measurement into 'usage_dimensions') so the
+        # read targets the correct Service -- connect, connectcases,
+        # connectcampaigns, app-integrations, etc. Operations such as
+        # ListTagsForResource / TagResource / UntagResource exist under several
+        # services; the old hardcoded Service=Connect silently read Connect's
+        # usage for every one of them. Fall back to the Connect dimensions only
+        # for static overlays that carry no discovered usage_dimensions.
+        usage_dims = metric_config.get('usage_dimensions')
+        if usage_dims:
+            dimensions = [{'Name': k, 'Value': v} for k, v in usage_dims.items()]
+        else:
+            dimensions = [
+                {'Name': 'Service', 'Value': 'Connect'},
+                {'Name': 'Class', 'Value': 'None'},
+                {'Name': 'Type', 'Value': 'API'},
+                {'Name': 'Resource', 'Value': operation},
+            ]
 
         # Look back 15 minutes and inspect per-minute call counts.
         end_time = datetime.now(timezone.utc)
@@ -2037,10 +2080,39 @@ class ConnectQuotaMonitor:
         # instance) win over any discovered stub for the same code. The catalog
         # is therefore a strict SUPERSET: discovery only ADDS codes, it never
         # removes or downgrades a previously-working one.
+        # Fix A (de-dupe): index the DISCOVERED rate quotas by operation
+        # (built above, pre-overlay) so we can drop a redundant static rate
+        # overlay. A static cloudwatch_api overlay -- whether keyed by a
+        # synthetic L-API-* code (lands as a SEPARATE catalog entry) or by a
+        # real code (OVERWRITES the discovered entry) -- re-describes a quota
+        # AWS already publishes under its real code, but carries a hardcoded
+        # default_limit that shadows the customer's real applied value and
+        # false-fires. When a discovered AUTO_RATE twin exists for the same
+        # operation, prefer discovery and skip the overlay. Overlays with NO
+        # discovered twin (operation absent from Service Quotas) and all
+        # non-rate overlays (resource counts, etc.) are kept unchanged.
+        discovered_rate_ops = {
+            e['operation']: qc
+            for qc, e in catalog.items()
+            if e.get('method') == 'cloudwatch_api' and e.get('operation')
+        }
+        deduped = 0
         for qcode, static_entry in ENHANCED_CONNECT_QUOTA_METRICS.items():
+            if static_entry.get('method') == 'cloudwatch_api':
+                op = static_entry.get('operation')
+                twin = discovered_rate_ops.get(op)
+                if twin is not None:
+                    deduped += 1
+                    logger.debug(
+                        f"Overlay {qcode} ({op}) skipped: discovered twin "
+                        f"{twin} carries the real applied limit (de-dupe)"
+                    )
+                    continue
             merged = dict(static_entry)
             merged.setdefault('measurement_status', 'OVERLAY')
             catalog[qcode] = merged
+        if deduped:
+            logger.info(f"De-duped {deduped} redundant rate overlay(s) in favor of discovery")
 
         # Recount statuses over the final (merged) catalog.
         status_counts = {}
